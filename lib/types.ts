@@ -15,6 +15,7 @@ export interface CandidateProfile {
     linkedin: string;
     github: string;
     website: string;
+    gender?: string;
   };
   workExperience: Array<{
     jobTitle: string;

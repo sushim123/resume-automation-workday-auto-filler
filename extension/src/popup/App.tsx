@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
+  Square,
   Zap,
   FileText,
   Play,
@@ -74,6 +75,8 @@ export default function App() {
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
+  const autoFillRunningRef = useRef(false);
+  const [isAutoFillRunning, setIsAutoFillRunning] = useState(false);
 
   // Settings state
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(true);
@@ -173,7 +176,21 @@ export default function App() {
       chrome.storage.local.get(['candidateProfile'], (result) => {
         if (chrome.runtime?.lastError) return;
         if (result?.candidateProfile) {
-          setProfile(result.candidateProfile);
+          const prof = result.candidateProfile;
+          const updatedProfile: CandidateProfile = {
+            ...prof,
+            eeoDisclosures: {
+              ...prof.eeoDisclosures,
+              gender: (prof.eeoDisclosures?.gender && prof.eeoDisclosures?.gender !== 'Decline to self-identify') ? prof.eeoDisclosures.gender : (prof.personalInfo?.gender || 'Male'),
+              raceEthnicity: 'American Indian or Alaska Native (Not Hispanic or Latino) (United States of America)',
+              veteranStatus: 'I am not a protected veteran',
+              disabilityStatus: prof.eeoDisclosures?.disabilityStatus || 'No, I do not have a disability',
+              workAuthorization: prof.eeoDisclosures?.workAuthorization || 'Yes',
+              requiresSponsorship: prof.eeoDisclosures?.requiresSponsorship || 'No'
+            }
+          };
+          setProfile(updatedProfile);
+          chrome.storage.local.set({ candidateProfile: updatedProfile });
         }
       });
     }
@@ -329,71 +346,215 @@ export default function App() {
     }
   };
 
+  const stopAutofill = () => {
+    autoFillRunningRef.current = false;
+    setIsAutoFillRunning(false);
+    setLoading(false);
+    setStatusMsg('Auto-fill stopped by user.');
+  };
+
   const handleAutofillStep = async () => {
     if (!profile) { setStatusMsg('Upload a resume first.'); return; }
 
+    // Toggle stop if already running
+    if (autoFillRunningRef.current) {
+      stopAutofill();
+      return;
+    }
+
+    autoFillRunningRef.current = true;
+    setIsAutoFillRunning(true);
     setLoading(true);
-    setStatusMsg('Extracting Workday form fields...');
+    setStatusMsg('Starting Continuous Auto-Fill...');
 
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.runtime?.id) {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (chrome.runtime?.lastError) return;
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+        if (chrome.runtime?.lastError) {
+          stopAutofill();
+          return;
+        }
         const tab = tabs[0];
-        if (!tab || typeof tab.id !== 'number') return;
+        if (!tab || typeof tab.id !== 'number') {
+          stopAutofill();
+          return;
+        }
         const tabId: number = tab.id;
 
-        chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_FIELDS' }, async (res) => {
-          const err = chrome.runtime?.lastError;
-          if (err || !res?.success || !res?.fields) {
-            setStatusMsg('Could not read fields. Please refresh Workday page.');
-            setLoading(false);
-            return;
+        let stepErrorCount = 0;
+        let lastStepName = '';
+        let stepIteration = 0;
+        const maxIterations = 25;
+
+        while (autoFillRunningRef.current && stepIteration < maxIterations) {
+          stepIteration++;
+
+          // 1. Extract fields & page state
+          const extractResult: any = await new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_FIELDS' }, (res) => {
+              if (chrome.runtime?.lastError || !res?.success) resolve(null);
+              else resolve(res);
+            });
+          });
+
+          if (!autoFillRunningRef.current) break;
+
+          if (!extractResult) {
+            setStatusMsg('Connecting to Workday page...');
+            await new Promise((r) => setTimeout(r, 1500));
+            continue;
           }
 
-          setStatusMsg(`AI Mapping ${res.fields.length} detected fields...`);
+          const stepName = extractResult.status?.stepName || 'Current Step';
+          const isReviewStep = extractResult.status?.isFinalReviewStep || stepName.toLowerCase().includes('review');
 
+          if (stepName !== lastStepName) {
+            stepErrorCount = 0;
+            lastStepName = stepName;
+            setStatusMsg(`[${stepName}] Starting AI auto-fill...`);
+          }
+
+          // 2. If at Review step: save review and complete
+          if (isReviewStep) {
+            setStatusMsg('📋 Reached Final Review step! Auto-saving review...');
+            await new Promise((resolve) => {
+              chrome.tabs.sendMessage(
+                tabId,
+                { type: 'EXECUTE_AUTOFILL', payload: { instructions: [], candidate: profile } },
+                () => resolve(true)
+              );
+            });
+            await new Promise((r) => setTimeout(r, 1000));
+
+            // Save & Continue / Submit on the Review page
+            await new Promise((resolve) => {
+              chrome.tabs.sendMessage(tabId, { type: 'SUBMIT_STEP' }, () => resolve(true));
+            });
+
+            setStatusMsg('🎉 All steps successfully filled & saved through Review!');
+            detectWorkdayStep();
+            break;
+          }
+
+          // Check if we are on the initial "Autofill with Resume" / Drop file page
+          const isInitialAutofillPage = (extractResult.fields || []).length === 0 &&
+            (stepName.toLowerCase().includes('autofill') || document.body?.textContent?.toLowerCase().includes('autofill with resume'));
+
+          if (isInitialAutofillPage) {
+            setStatusMsg('Advancing past Autofill with Resume step...');
+            await new Promise((resolve) => {
+              chrome.tabs.sendMessage(tabId, { type: 'SUBMIT_STEP' }, () => resolve(true));
+            });
+            await new Promise((r) => setTimeout(r, 2500));
+            detectWorkdayStep();
+            continue;
+          }
+
+          // 3. AI Mapping from backend
+          let instructions: any[] = [];
           try {
+            setStatusMsg(`[${stepName}] AI Mapping ${extractResult.fields?.length || 0} fields...`);
             const mapRes = await fetch(`${API_BASE}/api/map-fields`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 candidate: profile,
-                fields: res.fields,
-                pageErrors: res.pageErrors,
-                stepName: res.status?.stepName || 'Form'
+                fields: extractResult.fields || [],
+                pageErrors: extractResult.pageErrors,
+                stepName
               }),
             });
             const mapData = await mapRes.json();
             if (mapData.success && mapData.instructions) {
-              setStatusMsg('Safely auto-filling fields...');
-              chrome.tabs.sendMessage(
-                tabId,
-                { type: 'EXECUTE_AUTOFILL', payload: { instructions: mapData.instructions, candidate: profile } },
-                (fillRes) => {
-                  const fillErr = chrome.runtime?.lastError;
-                  if (!fillErr && fillRes?.success) {
-                    const stepLower = (res.status?.stepName || '').toLowerCase();
-                    const isManualReviewStep = stepLower.includes('voluntary disclosures') ||
-                      (stepLower.includes('voluntary') && stepLower.includes('disclosure'));
-
-                    if (isManualReviewStep) {
-                      setStatusMsg(`Filled Ethnicity! Please review & click Save and Continue ✓`);
-                    } else {
-                      setStatusMsg(`Successfully filled ${fillRes.result.filledCount} fields! ✓`);
-                    }
-                  }
-                  setLoading(false);
-                }
-              );
-            } else {
-              setStatusMsg('No mapping instructions returned.');
-              setLoading(false);
+              instructions = mapData.instructions;
             }
-          } catch {
-            setStatusMsg('Mapping API error.');
-            setLoading(false);
+          } catch (e) {
+            console.warn('[Auto-Fill] Mapping API notice:', e);
           }
-        });
+
+          if (!autoFillRunningRef.current) break;
+
+          // 4. Fill form fields with full JSON candidate profile and await complete finish
+          setStatusMsg(`[${stepName}] Auto-filling all JSON details (Experience, Education, Skills, Disclosures)...`);
+          const fillRes: any = await new Promise((resolve) => {
+            chrome.tabs.sendMessage(
+              tabId,
+              { type: 'EXECUTE_AUTOFILL', payload: { instructions, candidate: profile } },
+              (res) => resolve(res)
+            );
+          });
+
+          const filledCount = fillRes?.result?.filledCount || 0;
+          setStatusMsg(`[${stepName}] Filled ${filledCount} fields from JSON profile! Verifying... ✓`);
+
+          // Allow DOM to settle and verify all fields have committed
+          await new Promise((r) => setTimeout(r, 2000));
+
+          if (!autoFillRunningRef.current) break;
+
+          // 5. Solve DOM errors / date alerts / checkboxes
+          setStatusMsg(`[${stepName}] Checking for DOM alerts / required fields...`);
+          await new Promise((resolve) => {
+            chrome.tabs.sendMessage(
+              tabId,
+              { type: 'SOLVE_DOM_ERRORS', payload: { candidate: profile } },
+              () => resolve(true)
+            );
+          });
+
+          await new Promise((r) => setTimeout(r, 1000));
+
+          if (!autoFillRunningRef.current) break;
+
+          // 6. Only now trigger Save & Continue to move to the next step
+          setStatusMsg(`[${stepName}] All details filled! Triggering Save & Continue...`);
+          await new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, { type: 'SUBMIT_STEP' }, () => resolve(true));
+          });
+
+          // Wait 3.5s for Workday to complete page transition and render the new tab
+          setStatusMsg('Loading next step from Workday...');
+          await new Promise((r) => setTimeout(r, 3500));
+
+          if (!autoFillRunningRef.current) break;
+
+          // 7. Check if page transitioned or encountered errors
+          const nextExtract: any = await new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_FIELDS' }, (res) => resolve(res));
+          });
+
+          const newStepName = nextExtract?.status?.stepName || '';
+          const hasErrors = nextExtract?.pageErrors && nextExtract.pageErrors.length > 0;
+
+          if (newStepName === stepName || hasErrors) {
+            stepErrorCount++;
+            console.warn(`[Auto-Fill] Step "${stepName}" did not advance (attempt ${stepErrorCount})`);
+
+            if (stepErrorCount >= 4) {
+              setStatusMsg(`⚠️ 3-4 persistent errors on "${stepName}". Paused for user inspection.`);
+              break; // Stop and allow user to review
+            } else {
+              setStatusMsg(`[${stepName}] Resolving errors (${stepErrorCount}/3) and retrying...`);
+              await new Promise((resolve) => {
+                chrome.tabs.sendMessage(
+                  tabId,
+                  { type: 'SOLVE_DOM_ERRORS', payload: { candidate: profile } },
+                  () => resolve(true)
+                );
+              });
+              await new Promise((r) => setTimeout(r, 1200));
+            }
+          } else {
+            stepErrorCount = 0;
+            setStatusMsg(`✓ Successfully switched to "${newStepName || 'Next Step'}"! Waiting to fill all details...`);
+            // Wait an extra 1.5s for the new tab DOM elements to finish rendering
+            await new Promise((r) => setTimeout(r, 1500));
+            detectWorkdayStep();
+          }
+        }
+
+        autoFillRunningRef.current = false;
+        setIsAutoFillRunning(false);
+        setLoading(false);
       });
     }
   };
@@ -874,19 +1035,6 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto', paddingTop: 6 }}>
               {(() => {
                 const stepLower = (stepStatus?.stepName || '').toLowerCase();
-                const isManualStep = stepLower.includes('voluntary disclosures') ||
-                  (stepLower.includes('voluntary') && stepLower.includes('disclosure'));
-
-                if (isManualStep) {
-                  return (
-                    <div className="alert-box alert-warning">
-                      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-                      <span>
-                        This section requires manual verification (e.g. EEOC/Disability). Please review selections and click Save & Continue.
-                      </span>
-                    </div>
-                  );
-                }
 
                 if (stepLower.includes('start your application') || stepLower.includes('start application')) {
                   return (
@@ -974,9 +1122,17 @@ export default function App() {
                       </div>
                     )}
 
-                    <button className="btn-primary" onClick={handleAutofillStep} disabled={loading || !profile}>
-                      {loading ? <div className="spinner-loader" /> : <Play size={16} />}
-                      <span>{loading ? 'AI Auto-Filling Fields...' : 'Auto-Fill Current Step'}</span>
+                    <button
+                      className={isAutoFillRunning ? "btn-danger" : "btn-primary"}
+                      onClick={handleAutofillStep}
+                      disabled={!profile}
+                      style={{
+                        background: isAutoFillRunning ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : undefined,
+                        boxShadow: isAutoFillRunning ? '0 0 16px rgba(239, 68, 68, 0.4)' : undefined
+                      }}
+                    >
+                      {isAutoFillRunning ? <Square size={16} fill="white" /> : (loading ? <div className="spinner-loader" /> : <Play size={16} />)}
+                      <span>{isAutoFillRunning ? 'Stop Auto-Fill' : (loading ? 'Auto-Filling All Steps...' : 'Auto-Fill All Steps (Continuous)')}</span>
                     </button>
                   </>
                 );

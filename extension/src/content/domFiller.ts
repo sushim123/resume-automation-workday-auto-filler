@@ -110,6 +110,11 @@ export class DOMFiller {
         checkStr.includes('url') ||
         checkStr.includes('linkedin') ||
         checkStr.includes('github') ||
+        checkStr.includes('terms') ||
+        checkStr.includes('agreement') ||
+        checkStr.includes('accept') ||
+        checkStr.includes('source') ||
+        checkStr.includes('hear') ||
         (inst.action as string) === 'set_date'
       ) {
         console.log(`[Workday AI] Field "${inst.fieldId || inst.automationId}" is handled in Pass 1. Skipping Pass 2 edit ✓`);
@@ -514,7 +519,7 @@ export class DOMFiller {
       // Strategy 1.5: Year-ONLY spinbutton (Education dates: firstYearAttended / lastYearAttended — no month input!)
       if (!monthInput && yearInput) {
         console.log(`[Workday AI Date Fixer] Target: YEAR-ONLY spinbutton -> Writing year=${yearFormatted} (from source JSON: "${dateStr}")`);
-        await setRawValue(yearInput, yearFormatted, yearNum);
+        await setRawValue(yearInput, yearFormatted, yearNum, true);
         this.fixSingleDateField(yearInput, yearFormatted);
 
         const yearDisplay = container.querySelector<HTMLElement>('[data-automation-id="dateSectionYear-display"]');
@@ -981,20 +986,34 @@ export class DOMFiller {
     let filled = 0;
 
     const findSkillsInput = (): HTMLInputElement | null => {
-      return (
-        document.querySelector<HTMLInputElement>('#skills--skills') ||
-        document.querySelector<HTMLInputElement>(
-          'input[data-uxi-multiselect-id*="skill"], [data-automation-id="multiSelectContainer"] input, input[placeholder*="Type to Add Skills"], input[placeholder*="Add Skills"], input[data-automation-id*="skills"], input[aria-label*="Skills"], [data-automation-id*="skillsPrompt"] input, [data-automation-id*="skills"] input'
-        ) ||
-        Array.from(document.querySelectorAll<HTMLInputElement>('input')).find((inp) => {
-          const id = (inp.id || '').toLowerCase();
-          const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
-          const aria = (inp.getAttribute('aria-label') || '').toLowerCase();
-          const auto = (inp.getAttribute('data-automation-id') || '').toLowerCase();
-          return id.includes('skills') || ph.includes('skills') || aria.includes('skills') || auto.includes('skills');
-        }) ||
-        null
+      // Exclude the "How Did You Hear About Us?" source field from all matches
+      const isSourceField = (el: HTMLElement): boolean => {
+        const id = (el.id || '').toLowerCase();
+        const closestField = el.closest('[data-automation-id="formField-source"], [data-fkit-id*="source"]');
+        return id.includes('source') || !!closestField;
+      };
+
+      // Priority 1: Exact skills ID
+      const exact = document.querySelector<HTMLInputElement>('#skills--skills');
+      if (exact && !isSourceField(exact)) return exact;
+
+      // Priority 2: Skills-specific selectors
+      const specific = document.querySelector<HTMLInputElement>(
+        'input[data-uxi-multiselect-id*="skill"], input[placeholder*="Type to Add Skills"], input[placeholder*="Add Skills"], input[data-automation-id*="skills"], input[aria-label*="Skills"], [data-automation-id*="skillsPrompt"] input, [data-automation-id*="skills"] input, [data-fkit-id*="skills"] input'
       );
+      if (specific && !isSourceField(specific)) return specific;
+
+      // Priority 3: Broad fallback scan — ONLY match inputs whose container mentions "skills"
+      const fallback = Array.from(document.querySelectorAll<HTMLInputElement>('input')).find((inp) => {
+        if (isSourceField(inp)) return false;
+        const id = (inp.id || '').toLowerCase();
+        const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+        const aria = (inp.getAttribute('aria-label') || '').toLowerCase();
+        const auto = (inp.getAttribute('data-automation-id') || '').toLowerCase();
+        const parentLabel = (inp.closest('[data-automation-id*="formField"]')?.querySelector('label')?.textContent || '').toLowerCase();
+        return id.includes('skills') || ph.includes('skills') || aria.includes('skills') || auto.includes('skills') || parentLabel.includes('skills');
+      });
+      return fallback || null;
     };
 
     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
@@ -1088,6 +1107,31 @@ export class DOMFiller {
           await new Promise((r) => setTimeout(r, 500));
           filled++;
         }
+
+        // 7. Click CROSS / Clear icon to reset search value to null
+        console.log(`[Workday AI] Clicking Cross (clearSearchButton) icon to reset input for next skill...`);
+        const clearBtn = document.querySelector<HTMLElement>(
+          '[data-automation-id="clearSearchButton"], [data-uxi-selectinputicon-type="clearSearchButton"], svg.wd-icon-x, [data-automation-id="multiselectInputContainer"] [data-automation-id="clearSearchButton"], [data-automation-id="multiSelectContainer"] .wd-icon-x'
+        );
+
+        if (clearBtn) {
+          const clickableCross = clearBtn.closest<HTMLElement>('span, button') || clearBtn;
+          this.clickWorkdayOptionElement(clickableCross);
+          await new Promise((r) => setTimeout(r, 400));
+        }
+
+        // Ensure currentInput text is completely null/cleared
+        try {
+          const freshInput = findSkillsInput() || currentInput;
+          if (freshInput) {
+            const trk = (freshInput as any)._reactValueTracker;
+            if (trk) trk.setValue('');
+            if (nativeSetter) nativeSetter.call(freshInput, '');
+            else freshInput.value = '';
+            freshInput.dispatchEvent(new Event('input', { bubbles: true }));
+            freshInput.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        } catch { }
 
         // Small pause before processing the next skill
         await new Promise((r) => setTimeout(r, 300));
@@ -1688,23 +1732,29 @@ export class DOMFiller {
           '[data-automation-id*="education"], [role="group"], fieldset, section, div.css-1ebprri, div.css-1iw5nyw'
         ) || allSchools[i].parentElement?.parentElement?.parentElement?.parentElement?.parentElement;
 
-        // From (firstYearAttended)
+        // From (firstYearAttended) container
         const eduStartContainer = (eduPrefix
           ? document.querySelector<HTMLElement>(`[data-fkit-id*="${eduPrefix}--firstYearAttended"], [id*="${eduPrefix}--firstYearAttended"]`)
           : null
-        ) || eduEntryContainer?.querySelector<HTMLElement>('[data-automation-id="formField-firstYearAttended"]')
-          || document.querySelectorAll<HTMLElement>('[data-automation-id="formField-firstYearAttended"]')[i];
+        ) || eduEntryContainer?.querySelector<HTMLElement>('[data-automation-id="formField-firstYearAttended"], [data-fkit-id*="firstYearAttended"], [id*="firstYearAttended"]')
+          || document.querySelectorAll<HTMLElement>('[data-automation-id="formField-firstYearAttended"], [data-fkit-id*="firstYearAttended"]')[i];
 
-        // To (lastYearAttended)
+        // To (lastYearAttended) container
         const eduEndContainer = (eduPrefix
           ? document.querySelector<HTMLElement>(`[data-fkit-id*="${eduPrefix}--lastYearAttended"], [id*="${eduPrefix}--lastYearAttended"]`)
           : null
-        ) || eduEntryContainer?.querySelector<HTMLElement>('[data-automation-id="formField-lastYearAttended"]')
-          || document.querySelectorAll<HTMLElement>('[data-automation-id="formField-lastYearAttended"]')[i];
-        if (eduStartContainer && edu.startDate && !this.hasValue(eduStartContainer)) {
-          const startYear =
-            edu.startDate.match(/\d{4}/)?.[0] || edu.startDate;
+        ) || eduEntryContainer?.querySelector<HTMLElement>('[data-automation-id="formField-lastYearAttended"], [data-fkit-id*="lastYearAttended"], [id*="lastYearAttended"]')
+          || document.querySelectorAll<HTMLElement>('[data-automation-id="formField-lastYearAttended"], [data-fkit-id*="lastYearAttended"]')[i];
 
+        // Extract dates with fallback property names
+        const rawStart = edu.startDate || (edu as any).startYear || (edu as any).from || (edu as any).firstYearAttended || '';
+        const rawEnd = edu.endDate || (edu as any).endYear || (edu as any).to || (edu as any).lastYearAttended || (edu as any).graduationYear || (edu as any).year || '';
+
+        const startYear = rawStart ? (String(rawStart).match(/\d{4}/)?.[0] || String(rawStart)).trim() : '';
+        const endYear = rawEnd ? (String(rawEnd).match(/\d{4}/)?.[0] || String(rawEnd)).trim() : '';
+
+        if (eduStartContainer && startYear && !this.isDateContainerFilled(eduStartContainer)) {
+          console.log(`[Workday AI] Education #${i + 1}: Filling From date (firstYearAttended) = "${startYear}"`);
           await this.setWorkdayDateValue(
             eduStartContainer,
             startYear,
@@ -1712,10 +1762,8 @@ export class DOMFiller {
           );
         }
 
-        if (eduEndContainer && edu.endDate && !this.hasValue(eduEndContainer)) {
-          const endYear =
-            edu.endDate.match(/\d{4}/)?.[0] || edu.endDate;
-
+        if (eduEndContainer && endYear && !this.isDateContainerFilled(eduEndContainer)) {
+          console.log(`[Workday AI] Education #${i + 1}: Filling To date (lastYearAttended) = "${endYear}"`);
           await this.setWorkdayDateValue(
             eduEndContainer,
             endYear,
@@ -2010,36 +2058,53 @@ export class DOMFiller {
       .join(' ');
   }
 
-  private static resolveGenderFromName(firstName?: string, fullName?: string): string {
-    const cleanName = `${firstName || ''} ${fullName || ''}`.toLowerCase().trim();
-    if (!cleanName) return 'Male';
+  public static analyzeGenderFromCandidate(candidate: CandidateProfile): string {
+    // 1. Check AI-extracted gender from profile (stored in eeoDisclosures or personalInfo)
+    const explicitGender = (candidate?.eeoDisclosures?.gender || candidate?.personalInfo?.gender || (candidate as any)?.gender || '').trim();
+    if (explicitGender && explicitGender !== 'Decline to self-identify' && (explicitGender.toLowerCase() === 'male' || explicitGender.toLowerCase() === 'female')) {
+      return this.formatProperCase(explicitGender);
+    }
 
-    const femaleIndicators = [
-      'priya', 'anita', 'pooja', 'sneha', 'sakshi', 'ananya', 'sarah', 'emily', 'jessica',
-      'maria', 'ashley', 'michelle', 'amanda', 'lauren', 'hannah', 'rachel', 'stephanie',
-      'divya', 'neha', 'shreya', 'kavya', 'swati', 'aditi', 'tanvi', 'ritu', 'priyanka',
-      'nisha', 'megha', 'deepa', 'aishwarya', 'sonia', 'kajal', 'shweta', 'monika', 'poornima',
-      'aarti', 'ankita', 'bhavna', 'chitra', 'isabella', 'sophia', 'emma', 'olivia', 'ava',
-      'charlotte', 'amelia', 'mia', 'harper', 'evelyn', 'abigail', 'elizabeth', 'camila'
-    ];
+    // 2. Scan resume text corpus (summary, descriptions, hyperlinks) for gender pronouns & honorifics
+    const textCorpus = [
+      candidate?.summary || '',
+      candidate?.personalInfo?.fullName || '',
+      ...(candidate?.workExperience || []).map((w) => `${w.jobTitle} ${w.description}`),
+      ...(candidate?.projects || []).map((p) => `${p.title} ${p.description}`)
+    ].join(' ').toLowerCase();
 
-    const isFemale = femaleIndicators.some((f) => cleanName.includes(f));
-    return isFemale ? 'Female' : 'Male';
+    const femaleMatches = (textCorpus.match(/\bms\b|\bms\.|\bmrs\b|\bmrs\.|\bshe\/her\b|\bshe\b|\bher\b|\bherself\b|\bwoman\b|\bfemale\b/g) || []).length;
+    const maleMatches = (textCorpus.match(/\bmr\b|\bmr\.|\bhe\/him\b|\bhe\b|\bhis\b|\bhimself\b|\bman\b|\bmale\b/g) || []).length;
+    if (femaleMatches > maleMatches && femaleMatches >= 2) return 'Female';
+    if (maleMatches > femaleMatches && maleMatches >= 2) return 'Male';
+
+    return 'Male';
   }
 
   public static async fillWorkdayVoluntaryDisclosures(candidate: CandidateProfile): Promise<number> {
     let filled = 0;
     const eeo = candidate.eeoDisclosures || {};
 
-    const targetEthnicity = (eeo.raceEthnicity && eeo.raceEthnicity !== 'Decline to self-identify') ? eeo.raceEthnicity : ((candidate as any).ethnicity || 'Asian');
+    const defaultEthnicity = 'American Indian or Alaska Native (Not Hispanic or Latino) (United States of America)';
+    const targetEthnicity = (eeo.raceEthnicity && eeo.raceEthnicity !== 'Decline to self-identify')
+      ? eeo.raceEthnicity
+      : ((candidate as any).ethnicity || defaultEthnicity);
 
-    console.log(`[Workday AI] Voluntary Disclosures: Auto-filling Ethnicity ("${targetEthnicity}") and Terms Checkbox. Skipping Gender & Veteran Status for manual user selection ✓`);
+    const targetGender = this.analyzeGenderFromCandidate(candidate);
+    const targetVeteran = eeo.veteranStatus || 'I am not a protected veteran';
 
-    // 0. DIRECT Workday ID Match for Ethnicity & Terms Checkbox
+    console.log(`[Workday AI] Voluntary Disclosures: Auto-filling Ethnicity ("${targetEthnicity}"), Gender ("${targetGender}"), Veteran Status ("${targetVeteran}"), and Terms Checkbox ✓`);
+
+    // 0. DIRECT Workday ID Match for Ethnicity, Gender, Veteran & Terms Checkbox
     let ethDone = false;
+    let genderDone = false;
+    let veteranDone = false;
     let termsDone = false;
 
-    const ethBtn = document.querySelector<HTMLElement>('button#personalInfoUS--ethnicity, button[name="ethnicity"], [data-automation-id="formField-ethnicity"] button');
+    // --- Ethnicity ---
+    const ethBtn = document.querySelector<HTMLElement>(
+      'button#personalInfoUS--ethnicity, button[name="ethnicity"], [data-automation-id="formField-ethnicity"] button, button[id*="ethnicity"], button[id*="race"]'
+    );
     if (ethBtn) {
       const curVal = (ethBtn.textContent || ethBtn.getAttribute('value') || '').trim();
       if (curVal && curVal !== 'Select One' && !curVal.toLowerCase().includes('select one')) {
@@ -2051,23 +2116,55 @@ export class DOMFiller {
       }
     }
 
-    const termsCb = document.querySelector<HTMLInputElement>('input#termsAndConditions--acceptTermsAndAgreements, input[name="acceptTermsAndAgreements"], [data-automation-id="formField-acceptTermsAndAgreements"] input[type="checkbox"]');
-    if (termsCb) {
-      if (termsCb.checked) {
-        termsDone = true;
+    // --- Gender ---
+    const genderBtn = document.querySelector<HTMLElement>(
+      'button#personalInfoUS--gender, button[name="gender"], [data-automation-id="formField-gender"] button, button[id*="gender"]'
+    );
+    if (genderBtn && targetGender) {
+      const curVal = (genderBtn.textContent || genderBtn.getAttribute('value') || '').trim();
+      if (curVal && curVal !== 'Select One' && !curVal.toLowerCase().includes('select one')) {
+        genderDone = true;
       } else {
-        console.log('[Workday AI] Direct HTML ID match -> Terms & Conditions Checkbox checked ✓');
-        const ok = this.setCheckboxValue(termsCb, true);
-        if (ok) { filled++; termsDone = true; }
+        console.log(`[Workday AI] Direct HTML ID match -> Gender: "${targetGender}"`);
+        const ok = await this.setSelectValue(genderBtn, targetGender);
+        if (ok) { filled++; genderDone = true; }
       }
     }
 
-    if (ethDone && termsDone) {
+    // --- Veteran Status ---
+    const veteranBtn = document.querySelector<HTMLElement>(
+      'button#personalInfoUS--veteranStatus, button[name="veteranStatus"], [data-automation-id="formField-veteranStatus"] button, button[id*="veteran"]'
+    );
+    if (veteranBtn && targetVeteran) {
+      const curVal = (veteranBtn.textContent || veteranBtn.getAttribute('value') || '').trim();
+      if (curVal && curVal !== 'Select One' && !curVal.toLowerCase().includes('select one')) {
+        veteranDone = true;
+      } else {
+        console.log(`[Workday AI] Direct HTML ID match -> Veteran Status: "${targetVeteran}"`);
+        const ok = await this.setSelectValue(veteranBtn, targetVeteran);
+        if (ok) { filled++; veteranDone = true; }
+      }
+    }
+
+    // --- Terms & Conditions Checkbox ---
+    const termsCb = document.querySelector<HTMLInputElement>(
+      'input#termsAndConditions--acceptTermsAndAgreements, input[name="acceptTermsAndAgreements"]'
+    ) || document.querySelector<HTMLInputElement>(
+      '[data-automation-id="formField-acceptTermsAndAgreements"] input[type="checkbox"]'
+    );
+    if (termsCb) {
+      console.log('[Workday AI] Found Terms checkbox, forcing React-aware check ✓');
+      await this.forceCheckTermsCheckbox(termsCb);
+      termsDone = true;
+      filled++;
+    }
+
+    if (ethDone && genderDone && veteranDone && termsDone) {
       console.log('[Workday AI] Voluntary Disclosures handled cleanly ✓');
       return filled;
     }
 
-    // 1. Scan formField / group elements ONLY for Ethnicity and Terms (SKIP Gender & Veteran Status)
+    // 1. Scan formField / group elements for Ethnicity, Gender, Veteran Status, and Terms
     const formFields = Array.from(document.querySelectorAll<HTMLElement>(
       '[data-automation-id*="formField"], fieldset, div[role="group"], div.css-7t35fz, div.css-gvoll6'
     ));
@@ -2093,8 +2190,32 @@ export class DOMFiller {
         }
       }
 
+      // --- GENDER ---
+      else if (!genderDone && targetGender && (labelText.includes('gender') || labelText.includes('sex'))) {
+        if (selectBtn) {
+          const curVal = (selectBtn.textContent || selectBtn.getAttribute('value') || '').trim();
+          if (!curVal || curVal === 'Select One' || curVal.toLowerCase().includes('select one')) {
+            console.log(`[Workday AI] Filling Gender -> "${targetGender}"`);
+            const ok = await this.setSelectValue(selectBtn, targetGender);
+            if (ok) { filled++; genderDone = true; }
+          }
+        }
+      }
+
+      // --- VETERAN STATUS ---
+      else if (!veteranDone && targetVeteran && (labelText.includes('veteran') || labelText.includes('military') || labelText.includes('disabled veteran'))) {
+        if (selectBtn) {
+          const curVal = (selectBtn.textContent || selectBtn.getAttribute('value') || '').trim();
+          if (!curVal || curVal === 'Select One' || curVal.toLowerCase().includes('select one')) {
+            console.log(`[Workday AI] Filling Veteran Status -> "${targetVeteran}"`);
+            const ok = await this.setSelectValue(selectBtn, targetVeteran);
+            if (ok) { filled++; veteranDone = true; }
+          }
+        }
+      }
+
       // --- TERMS & CONDITIONS / PRIVACY POLICY CHECKBOX ---
-      else if (!termsDone && (labelText.includes('terms') || labelText.includes('privacy') || labelText.includes('agree') || labelText.includes('conditions') || labelText.includes('accept'))) {
+      else if (!termsDone && (labelText.includes('terms') || labelText.includes('privacy') || labelText.includes('agree') || labelText.includes('conditions') || labelText.includes('accept') || labelText.includes('consent'))) {
         if (checkboxInp && !checkboxInp.checked) {
           console.log('[Workday AI] Checking Terms & Conditions / Privacy Policy checkbox ✓');
           const ok = this.setCheckboxValue(checkboxInp, true);
@@ -2103,12 +2224,43 @@ export class DOMFiller {
       }
     }
 
-    // 2. Standalone checkbox search fallback for Terms and Conditions
+    // 2. Direct dropdown button scanning fallback for any remaining unfilled dropdowns
+    const allDropdownButtons = Array.from(document.querySelectorAll<HTMLElement>(
+      'button[aria-haspopup="listbox"], button[id*="dropdown"], [data-uxi-widget-type*="select"] button'
+    ));
+
+    for (const btn of allDropdownButtons) {
+      const container = btn.closest('fieldset, [role="group"], [data-automation-id*="formField"], div.css-gvoll6, div.css-7t35fz') || btn.parentElement?.parentElement?.parentElement || btn.parentElement;
+      const containerText = (container?.textContent || '').toLowerCase();
+      const prevText = (btn.previousElementSibling?.textContent || '').toLowerCase();
+      const text = `${containerText} ${prevText}`;
+
+      const curVal = (btn.textContent || btn.getAttribute('value') || '').trim();
+      const isUnset = !curVal || curVal === 'Select One' || curVal.toLowerCase().includes('select one');
+
+      if (isUnset) {
+        if (!ethDone && (text.includes('ethnicity') || text.includes('race'))) {
+          console.log(`[Workday AI] Direct Dropdown match -> Ethnicity: "${targetEthnicity}"`);
+          const ok = await this.setSelectValue(btn, targetEthnicity);
+          if (ok) { filled++; ethDone = true; }
+        } else if (!genderDone && (text.includes('gender') || text.includes('sex'))) {
+          console.log(`[Workday AI] Direct Dropdown match -> Gender: "${targetGender}"`);
+          const ok = await this.setSelectValue(btn, targetGender);
+          if (ok) { filled++; genderDone = true; }
+        } else if (!veteranDone && (text.includes('veteran') || text.includes('military') || text.includes('protected veteran') || text.includes('disabled veteran'))) {
+          console.log(`[Workday AI] Direct Dropdown match -> Veteran Status: "${targetVeteran}"`);
+          const ok = await this.setSelectValue(btn, targetVeteran);
+          if (ok) { filled++; veteranDone = true; }
+        }
+      }
+    }
+
+    // 3. Standalone checkbox search fallback for Terms and Conditions
     const allCheckboxes = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
     for (const cb of allCheckboxes) {
       if (!cb.checked) {
-        const parentTxt = (cb.closest('label, div, fieldset')?.textContent || '').toLowerCase();
-        if (parentTxt.includes('terms') || parentTxt.includes('privacy') || parentTxt.includes('agree') || parentTxt.includes('policy') || parentTxt.includes('checkbox')) {
+        const parentTxt = (cb.closest('label, div, fieldset, [role="group"]')?.textContent || cb.parentElement?.parentElement?.textContent || '').toLowerCase();
+        if (parentTxt.includes('terms') || parentTxt.includes('privacy') || parentTxt.includes('agree') || parentTxt.includes('policy') || parentTxt.includes('checkbox') || parentTxt.includes('consent') || parentTxt.includes('accept') || parentTxt.includes('service')) {
           console.log('[Workday AI] Standalone checkbox match -> Checking Terms & Privacy Policy ✓');
           const ok = this.setCheckboxValue(cb, true);
           if (ok) filled++;
@@ -2198,51 +2350,50 @@ export class DOMFiller {
     // 3. Auto-select "No, I do not have a disability and have not had one in the past"
     let disSelected = false;
 
-    // Direct match via exact disabilityStatus ID / label inside disability section
-    const disInput = disabilitySection.querySelector<HTMLInputElement>('input[id*="disabilityStatus"], input[name*="disabilityStatus"]');
-    const disLabel = disabilitySection.querySelector<HTMLLabelElement>('label[for*="disabilityStatus"]');
+    // Find the specific "No" checkbox by scanning all checkbox+label pairs inside the disability section
+    const allDisabilityInputs = Array.from(
+      (disabilitySection || document).querySelectorAll<HTMLInputElement>(
+        'input[type="checkbox"][id*="disabilityStatus"], input[type="checkbox"][class*="css-1hhv9wx"]'
+      )
+    );
 
-    if (disInput) {
-      console.log('[Workday AI] Direct match -> Disability Checkbox input found. Checking...');
-      this.clickWorkdayOptionElement(disInput);
-      disInput.checked = true;
-      disInput.setAttribute('aria-checked', 'true');
-      disInput.dispatchEvent(new Event('change', { bubbles: true }));
-      disInput.dispatchEvent(new Event('click', { bubbles: true }));
-      filled++;
-      disSelected = true;
-    } else if (disLabel) {
-      console.log('[Workday AI] Direct match -> Disability Label found. Clicking...');
-      this.clickWorkdayOptionElement(disLabel);
-      filled++;
-      disSelected = true;
+    for (const inp of allDisabilityInputs) {
+      // Find the associated label - either via for= attribute, or the next sibling label element
+      const labelEl =
+        (inp.id ? document.querySelector<HTMLLabelElement>(`label[for="${inp.id}"]`) : null) ||
+        inp.closest('.css-1utp272')?.querySelector<HTMLLabelElement>('label') ||
+        inp.nextElementSibling?.nextElementSibling as HTMLLabelElement;
+
+      const labelTxt = (labelEl?.textContent || inp.getAttribute('aria-label') || '').toLowerCase().trim();
+
+      if (labelTxt.includes('no, i do not have') || labelTxt.includes('not have a disability')) {
+        console.log(`[Workday AI] Self-Identify -> Selecting "No disability" checkbox for id=${inp.id}`);
+        await this.forceCheckTermsCheckbox(inp);
+        disSelected = true;
+        filled++;
+        break;
+      }
     }
 
-    // Fallback scan across options inside disability section
+    // Fallback: scan labels directly to click the right one
     if (!disSelected) {
-      const disabilityOptions = Array.from(disabilitySection.querySelectorAll<HTMLElement>(
-        'input[type="radio"], input[type="checkbox"], label, div.css-1utp272'
-      ));
+      const disabilityLabels = Array.from(
+        (disabilitySection || document).querySelectorAll<HTMLLabelElement>('label')
+      );
 
-      for (const opt of disabilityOptions) {
-        const txt = (opt.textContent || opt.getAttribute('aria-label') || opt.getAttribute('value') || '').toLowerCase().trim();
-        const parentTxt = (opt.closest('label, div, fieldset')?.textContent || '').toLowerCase().trim();
-
-        if (txt.includes('no, i do not have a disability') || txt.includes('not have a disability') ||
-          parentTxt.includes('no, i do not have a disability') || parentTxt.includes('not have a disability')) {
-          console.log('[Workday AI] Self-Identify -> Selected: "No, I do not have a disability and have not had one in the past" ✓');
-
-          if (opt instanceof HTMLInputElement) {
-            if (!opt.checked) {
-              this.clickWorkdayOptionElement(opt);
-              opt.checked = true;
-              opt.dispatchEvent(new Event('change', { bubbles: true }));
-              filled++;
-            }
+      for (const lbl of disabilityLabels) {
+        const txt = (lbl.textContent || '').toLowerCase().trim();
+        if (txt.includes('no, i do not have') || txt.includes('not have a disability')) {
+          console.log('[Workday AI] Self-Identify -> Clicking "No disability" label directly ✓');
+          const forId = lbl.getAttribute('for');
+          const linkedCb = forId ? document.getElementById(forId) as HTMLInputElement | null : null;
+          if (linkedCb) {
+            await this.forceCheckTermsCheckbox(linkedCb);
           } else {
-            this.clickWorkdayOptionElement(opt);
-            filled++;
+            this.clickWorkdayOptionElement(lbl);
           }
+          disSelected = true;
+          filled++;
           break;
         }
       }
@@ -2289,14 +2440,15 @@ export class DOMFiller {
 
     // Step 1: Click the search input to activate/focus it
     console.log('[Workday AI] How Did You Hear About Us?: Clicking search input to activate...');
-    this.clickWorkdayOptionElement(searchInp);
     searchInp.focus();
+    searchInp.click();
+    this.clickWorkdayOptionElement(searchInp);
     searchInp.dispatchEvent(new Event('focus', { bubbles: true }));
     searchInp.dispatchEvent(new Event('focusin', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 400));
 
-    // Step 2: Type "Facebook" using React-compatible native setter (no blur)
-    console.log('[Workday AI] How Did You Hear About Us?: Typing "Facebook" in search input...');
+    // Step 2: Type "Facebook" into search input
+    console.log('[Workday AI] How Did You Hear About Us?: Typing "Facebook"...');
     const tracker = (searchInp as any)._reactValueTracker;
     if (tracker) tracker.setValue('');
     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
@@ -2308,13 +2460,15 @@ export class DOMFiller {
     searchInp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Facebook' }));
     searchInp.dispatchEvent(new Event('input', { bubbles: true }));
     searchInp.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 600));
 
-    // Step 3: Wait for Workday to filter the dropdown options
-    console.log('[Workday AI] How Did You Hear About Us?: Waiting for filtered results...');
-    await new Promise((r) => setTimeout(r, 2000));
+    // Step 3: Click once on input as specified by user
+    console.log('[Workday AI] How Did You Hear About Us?: Clicking input and pressing Enter...');
+    searchInp.click();
+    this.clickWorkdayOptionElement(searchInp);
+    await new Promise((r) => setTimeout(r, 300));
 
-    // Step 4: Press Enter to select the filtered result
-    console.log('[Workday AI] How Did You Hear About Us?: Pressing Enter to select...');
+    // Step 4: Press the ENTER key
     const enterOpts: KeyboardEventInit = {
       key: 'Enter',
       code: 'Enter',
@@ -2329,36 +2483,39 @@ export class DOMFiller {
     searchInp.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
     searchInp.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
 
-    await new Promise((r) => setTimeout(r, 1500));
+    // Step 5: Check if option item appeared and click it if visible
+    await new Promise((r) => setTimeout(r, 1200));
+    const dropdownOptions = Array.from(document.querySelectorAll<HTMLElement>(
+      '[role="option"], [data-automation-id="promptOption"], li.css-1fjyfvd, div.css-1fjyfvd, [data-uxi-widget-type="selectinputlist"] li'
+    ));
 
-    // Step 5: Click outside to confirm selection and close dropdown
-    console.log('[Workday AI] How Did You Hear About Us?: Clicking outside to confirm...');
-    searchInp.blur();
-    const outsideTarget = document.querySelector<HTMLElement>(
-      '[data-automation-id="formField-candidateIsPreviousWorker"], [data-automation-id="smartDivider"], [data-automation-id="pageHeader"], h3, h4, body'
-    );
-    if (outsideTarget) {
-      outsideTarget.focus?.();
-      this.clickWorkdayOptionElement(outsideTarget);
+    const fbOption = dropdownOptions.find((opt) => {
+      const text = (opt.textContent || '').toLowerCase().trim();
+      return text.includes('facebook') || text.includes('social media');
+    });
+
+    if (fbOption) {
+      console.log(`[Workday AI] Found dropdown option: "${fbOption.textContent?.trim()}". Clicking option ✓`);
+      this.clickWorkdayOptionElement(fbOption);
+      await new Promise((r) => setTimeout(r, 600));
     }
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
 
-    await new Promise((r) => setTimeout(r, 800));
-
-    console.log('[Workday AI] How Did You Hear About Us?: Facebook selection completed. ✓');
+    console.log('[Workday AI] How Did You Hear About Us?: Facebook entered and selected. ✓');
     return true;
   }
 
-  public static clickWorkdayOptionElement(el: HTMLElement): void {
+  public static clickWorkdayOptionElement(el: Element | HTMLElement): void {
     try {
-      el.focus();
+      if (el instanceof HTMLElement) {
+        el.focus();
+      }
       el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
       el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
       el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
       el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-      el.click();
+      (el as HTMLElement).click?.();
     } catch {
-      try { el.click(); } catch { }
+      try { (el as HTMLElement).click?.(); } catch { }
     }
   }
 
@@ -2546,15 +2703,67 @@ export class DOMFiller {
           });
         }
 
-        // Fallback for Veteran Status: match "not a protected veteran", "identify as one", etc.
+        // Fallback for Veteran Status: match "I am not a protected veteran", "I am not a veteran", "not a protected veteran", etc.
         const cleanKw = targetLower.replace(/[^a-z0-9]/g, '');
-        if (!match && (cleanKw.includes('veteran') || cleanKw.includes('protected'))) {
+        if (!match && (cleanKw.includes('veteran') || cleanKw.includes('protected') || cleanKw.includes('military') || cleanKw.includes('iamnot'))) {
           match = options.find((o) => {
             const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
-            if (cleanKw.includes('not') && (txt.includes('not a protected') || txt.includes('not a veteran'))) return true;
-            if (cleanKw.includes('identify') && (txt.includes('identify') || txt.includes('protected veteran'))) return true;
+            if (cleanKw.includes('not') || targetLower.includes('not') || targetLower.includes('iamnot') || targetLower.includes('i am not')) {
+              return txt.includes('not a protected veteran') || txt.includes('not a veteran') || txt.includes('i am not a protected') || txt.includes('i am not a veteran') || txt.includes('not a') || (txt.includes('not') && txt.includes('veteran'));
+            }
+            if (cleanKw.includes('identify') || cleanKw.includes('oneormore')) {
+              return txt.includes('identify as one') || txt.includes('one or more');
+            }
             if (txt.includes('decline') || txt.includes('do not wish')) return true;
             return false;
+          });
+        }
+
+        // Fallback for Gender: match "Male", "Female", "Decline to State"
+        if (!match && (cleanKw === 'male' || cleanKw === 'female' || targetLower === 'male' || targetLower === 'female')) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            if (targetLower === 'male') return txt === 'male' || (txt.startsWith('male') && !txt.includes('female'));
+            if (targetLower === 'female') return txt === 'female' || txt.startsWith('female');
+            return false;
+          });
+        }
+
+        // Fallback for Ethnicity / Race: match "American Indian or Alaska Native", "Asian", "Black", "Hispanic", "White", "Decline to State"
+        if (!match && (cleanKw.includes('americanindian') || cleanKw.includes('alaskanative') || cleanKw.includes('indian') || targetLower.includes('american indian') || targetLower.includes('alaska native'))) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            return txt.includes('american indian') || txt.includes('alaska native');
+          });
+        }
+        if (!match && (cleanKw.includes('asian') || targetLower.includes('asian'))) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            return txt.includes('asian') && !txt.includes('caucasian');
+          });
+        }
+        if (!match && (cleanKw.includes('black') || cleanKw.includes('africanamerican'))) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            return txt.includes('black') || txt.includes('african american');
+          });
+        }
+        if (!match && (cleanKw.includes('hispanic') || cleanKw.includes('latino'))) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            return txt.includes('hispanic') || txt.includes('latino');
+          });
+        }
+        if (!match && (cleanKw.includes('white') || cleanKw.includes('caucasian'))) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            return txt.includes('white') || txt.includes('caucasian');
+          });
+        }
+        if (!match && (cleanKw.includes('decline') || cleanKw.includes('nottodisclose') || cleanKw.includes('selfidentify'))) {
+          match = options.find((o) => {
+            const txt = (o.textContent || o.getAttribute('data-automation-label') || '').toLowerCase().trim();
+            return txt.includes('decline') || txt.includes('not to') || txt.includes('prefer not') || txt.includes('do not wish');
           });
         }
         const isHighSchool = cleanKw.includes('highschool') || cleanKw.includes('12th') || cleanKw.includes('10th') || cleanKw.includes('secondary') || cleanKw.includes('hsc') || cleanKw.includes('ssc') || cleanKw.includes('intermediate') || cleanKw.includes('matriculation') || cleanKw.includes('school');
@@ -2822,7 +3031,52 @@ export class DOMFiller {
   }
 }
 
-  public static setCheckboxValue(element: HTMLElement, checked: boolean): boolean {
+  public static async forceCheckTermsCheckbox(cb: HTMLInputElement): Promise<void> {
+    const alreadyChecked = () => cb.checked || cb.getAttribute('aria-checked') === 'true';
+
+    // Strategy 1: If unchecked, click the visible custom checkbox span/div next to the input
+    if (!alreadyChecked()) {
+      const customCheckbox =
+        cb.closest('.css-d3pjdr')?.querySelector<HTMLElement>('.css-15ws53q, span, div') ||
+        cb.nextElementSibling as HTMLElement ||
+        cb.closest('label') as HTMLElement ||
+        cb.parentElement as HTMLElement;
+      if (customCheckbox) {
+        customCheckbox.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        customCheckbox.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+        customCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
+    // Strategy 2: Click the raw input directly (React may attach synthetic handler)
+    if (!alreadyChecked()) {
+      cb.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      cb.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+      cb.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
+    // Strategy 3: Force via React's native prototype setter + change event
+    if (!alreadyChecked()) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(cb, true);
+      } else {
+        cb.checked = true;
+      }
+      cb.setAttribute('aria-checked', 'true');
+      cb.setAttribute('aria-invalid', 'false');
+      cb.dispatchEvent(new Event('input', { bubbles: true }));
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    // Final state log
+    console.log(`[Workday AI] Terms checkbox final state -> checked=${cb.checked}, aria-checked=${cb.getAttribute('aria-checked')}`);
+  }
+
+  public static setCheckboxValue(element: HTMLElement, targetChecked: boolean = true): boolean {
     try {
       let cb: HTMLInputElement | null = null;
       if (element instanceof HTMLInputElement && element.type === 'checkbox') {
@@ -2831,12 +3085,47 @@ export class DOMFiller {
         cb = element.querySelector<HTMLInputElement>('input[type="checkbox"]');
       }
 
-      if (cb && cb.checked !== checked) {
-        this.clickWorkdayOptionElement(cb);
-        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!cb) return false;
+
+      // 1. Check current state - NEVER toggle if already in desired state!
+      const isCurrentlyChecked = cb.checked === true || cb.getAttribute('aria-checked') === 'true';
+      if (isCurrentlyChecked === targetChecked) {
+        console.log(`[Workday AI] Checkbox #${cb.id || cb.name} is ALREADY in desired state (${targetChecked}) ✓`);
         return true;
       }
-      return false;
+
+      console.log(`[Workday AI] Setting Checkbox #${cb.id || cb.name} -> checked=${targetChecked}`);
+
+      // 2. Set React property setter
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(cb, targetChecked);
+      } else {
+        cb.checked = targetChecked;
+      }
+
+      cb.setAttribute('aria-checked', targetChecked ? 'true' : 'false');
+
+      // 3. Click the interactive clickable element (custom checkbox span, label, or input)
+      const clickable = cb.closest('label') ||
+                        cb.parentElement?.querySelector('span, div') ||
+                        cb.parentElement ||
+                        cb;
+
+      this.clickWorkdayOptionElement(clickable);
+
+      // 4. Force ensure final checked state matches targetChecked
+      if (cb.checked !== targetChecked) {
+        if (nativeSetter) nativeSetter.call(cb, targetChecked);
+        else cb.checked = targetChecked;
+        cb.setAttribute('aria-checked', targetChecked ? 'true' : 'false');
+      }
+
+      // 5. Dispatch standard change events
+      cb.dispatchEvent(new Event('input', { bubbles: true }));
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      cb.dispatchEvent(new Event('blur', { bubbles: true }));
+      return true;
     } catch {
       return false;
     }

@@ -52,6 +52,19 @@ export function normalizeLinkedInUrl(rawUrl: string | undefined, fullName?: stri
   return clean;
 }
 
+export function detectGenderFromText(rawText: string, fullName?: string): string {
+  const lowerText = (rawText || '').toLowerCase();
+  
+  // 1. Check gender pronouns, honorifics, and gender keywords in resume text
+  const femaleCount = (lowerText.match(/\bms\b|\bms\.|\bmrs\b|\bmrs\.|\bshe\/her\b|\bshe\b|\bher\b|\bherself\b|\bwoman\b|\bfemale\b/g) || []).length;
+  const maleCount = (lowerText.match(/\bmr\b|\bmr\.|\bhe\/him\b|\bhe\b|\bhis\b|\bhimself\b|\bman\b|\bmale\b/g) || []).length;
+
+  if (femaleCount > maleCount && femaleCount >= 2) return 'Female';
+  if (maleCount > femaleCount && maleCount >= 2) return 'Male';
+
+  return 'Male';
+}
+
 export class AIService {
   private openai: OpenAI | null = null;
   private geminiKey: string | null = null;
@@ -655,8 +668,8 @@ Return a valid JSON object matching this structure ONLY:
         projects: d2.projects || [],
         languages: d3.languages || [],
         eeoDisclosures: {
-          gender: d1.eeoDisclosures?.gender || 'Decline to self-identify',
-          raceEthnicity: d1.eeoDisclosures?.raceEthnicity || 'Decline to self-identify',
+          gender: d1.eeoDisclosures?.gender && d1.eeoDisclosures?.gender !== 'Decline to self-identify' ? d1.eeoDisclosures.gender : detectGenderFromText(rawText, d1.fullName || d1.personalInfo?.fullName || `${d1.firstName || ''} ${d1.lastName || ''}`),
+          raceEthnicity: d1.eeoDisclosures?.raceEthnicity && d1.eeoDisclosures?.raceEthnicity !== 'Decline to self-identify' ? d1.eeoDisclosures.raceEthnicity : 'American Indian or Alaska Native (Not Hispanic or Latino) (United States of America)',
           veteranStatus: d1.eeoDisclosures?.veteranStatus || 'I am not a protected veteran',
           disabilityStatus: d1.eeoDisclosures?.disabilityStatus || 'No, I do not have a disability',
           workAuthorization: d1.workAuthorization || d1.eeoDisclosures?.workAuthorization || 'Yes',
@@ -727,8 +740,8 @@ Return a valid JSON object matching this structure ONLY:
       projects: d2.projects || d3.projects || [],
       languages: d3.languages || [],
       eeoDisclosures: {
-        gender: d1.eeoDisclosures?.gender || 'Decline to self-identify',
-        raceEthnicity: d1.eeoDisclosures?.raceEthnicity || 'Decline to self-identify',
+        gender: d1.eeoDisclosures?.gender && d1.eeoDisclosures?.gender !== 'Decline to self-identify' ? d1.eeoDisclosures.gender : detectGenderFromText(rawText, d1.personalInfo?.fullName || d1.fullName),
+        raceEthnicity: d1.eeoDisclosures?.raceEthnicity && d1.eeoDisclosures?.raceEthnicity !== 'Decline to self-identify' ? d1.eeoDisclosures.raceEthnicity : 'American Indian or Alaska Native (Not Hispanic or Latino) (United States of America)',
         veteranStatus: d1.eeoDisclosures?.veteranStatus || 'I am not a protected veteran',
         disabilityStatus: d1.eeoDisclosures?.disabilityStatus || 'No, I do not have a disability',
         workAuthorization: d1.workAuthorization || d1.eeoDisclosures?.workAuthorization || 'Yes',
@@ -944,8 +957,8 @@ Return JSON with key "instructions": [{"fieldId":"string","automationId":"string
       certifications: [],
       summary: lines.slice(0, 3).join(' ') || '',
       eeoDisclosures: {
-        gender: 'Decline to self-identify',
-        raceEthnicity: 'Decline to self-identify',
+        gender: detectGenderFromText(text, fullName),
+        raceEthnicity: 'American Indian or Alaska Native (Not Hispanic or Latino) (United States of America)',
         veteranStatus: 'I am not a protected veteran',
         disabilityStatus: 'No, I do not have a disability',
         workAuthorization: 'Yes',

@@ -473,10 +473,20 @@ export default function App() {
 
           if (!autoFillRunningRef.current) break;
 
-          // 4. Fill form fields with full JSON candidate profile and await complete finish
-          const isExperienceStep = stepName.toLowerCase().includes('experience') || stepName.toLowerCase().includes('work');
+          const stepNameLower = stepName.toLowerCase();
+          const isExperienceStep =
+            stepNameLower.includes('experience') ||
+            stepNameLower.includes('work') ||
+            stepNameLower.includes('education') ||
+            (extractResult.fields || []).some((f: any) => {
+              const str = (f.id || f.name || f.label || '').toLowerCase();
+              return str.includes('jobtitle') || str.includes('school') || str.includes('degree') || str.includes('skill');
+            });
+
           if (isExperienceStep) {
-            setStatusMsg(`[${stepName}] Deep filling Work Experience, Education, Skills, Websites (~35-40s)...`);
+            setStatusMsg(`[${stepName}] Deep filling Work Experience, Education & Skills (taking 30-40s)...`);
+            // Wait for all dynamic DOM sections to finish mounting
+            await new Promise((r) => setTimeout(r, 3000));
           } else {
             setStatusMsg(`[${stepName}] Auto-filling all JSON details...`);
           }
@@ -492,8 +502,8 @@ export default function App() {
           const filledCount = fillRes?.result?.filledCount || 0;
           setStatusMsg(`[${stepName}] Filled ${filledCount} details from JSON profile! Verifying... ✓`);
 
-          // If on My Experience, allow a generous 5s buffer to ensure all skills & entries are settled
-          const settleTime = isExperienceStep ? 5000 : 2000;
+          // If on My Experience, allow a generous 8s verification buffer to ensure all skills & entries are settled
+          const settleTime = isExperienceStep ? 8000 : 2000;
           await new Promise((r) => setTimeout(r, settleTime));
 
           if (!autoFillRunningRef.current) break;
@@ -508,12 +518,12 @@ export default function App() {
             );
           });
 
-          await new Promise((r) => setTimeout(r, 1200));
+          await new Promise((r) => setTimeout(r, 1500));
 
           if (!autoFillRunningRef.current) break;
 
           // 6. Only now trigger Save & Continue to move to the next step
-          setStatusMsg(`[${stepName}] All details filled! Triggering Save & Continue...`);
+          setStatusMsg(`[${stepName}] All details verified! Triggering Save & Continue...`);
           await new Promise((resolve) => {
             chrome.tabs.sendMessage(tabId, { type: 'SUBMIT_STEP' }, () => resolve(true));
           });

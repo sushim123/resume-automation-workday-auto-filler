@@ -42,16 +42,25 @@ export class DOMFiller {
 
     if (candidate) {
       try {
-        const addedMulti = await this.ensureMultiEntriesAndFill(candidate);
-        filledCount += addedMulti;
+        const prevWorkerFilled = await this.fillWorkdayPreviousWorker();
+        if (prevWorkerFilled) filledCount++;
+        await new Promise((r) => setTimeout(r, 400));
+
         const phoneCodeFilled = await this.fillWorkdayCountryPhoneCode(candidate);
         if (phoneCodeFilled) filledCount++;
+        await new Promise((r) => setTimeout(r, 600));
+
+        const addedMulti = await this.ensureMultiEntriesAndFill(candidate);
+        filledCount += addedMulti;
+        await new Promise((r) => setTimeout(r, 400));
+
         const voluntaryFilled = await this.fillWorkdayVoluntaryDisclosures(candidate);
         filledCount += voluntaryFilled;
+        await new Promise((r) => setTimeout(r, 400));
+
         const selfIdentifyFilled = await this.fillWorkdaySelfIdentify(candidate);
         filledCount += selfIdentifyFilled;
-        const sourceFilled = await this.fillWorkdaySource();
-        if (sourceFilled) filledCount++;
+        await new Promise((r) => setTimeout(r, 400));
       } catch (err) {
         console.warn('[Workday AI] Multi-entry setup notice:', err);
       }
@@ -67,6 +76,8 @@ export class DOMFiller {
 
       if (
         checkStr.includes('source') ||
+        checkStr.includes('countryphonecode') ||
+        checkStr.includes('phonecode') ||
         checkStr.includes('work') ||
         checkStr.includes('exp') ||
         checkStr.includes('edu') ||
@@ -115,27 +126,37 @@ export class DOMFiller {
 
         if (!el) continue;
 
-        // Skip any field that already has a value in Pass 2
-        if (this.hasValue(el) || this.isDateContainerFilled(el.closest('[data-automation-id="dateInputWrapper"], fieldset') || el.parentElement)) {
-          console.log(`[Workday AI] Field "${inst.fieldId || inst.automationId}" already has value -> Skipping Pass 2 edit ✓`);
-          continue;
+        let valToFill = inst.value;
+        const autoLower = (inst.automationId || '').toLowerCase();
+        const fieldIdLower = (inst.fieldId || '').toLowerCase();
+
+        // If it's a name field (First Name, Last Name, Legal Name), ensure Proper Case to avoid Workday all-caps alert
+        if (
+          autoLower.includes('firstname') ||
+          autoLower.includes('lastname') ||
+          autoLower.includes('legalname') ||
+          fieldIdLower.includes('firstname') ||
+          fieldIdLower.includes('lastname') ||
+          fieldIdLower.includes('legalname')
+        ) {
+          valToFill = this.formatProperCase(valToFill);
         }
 
         let fieldSuccess = false;
 
         switch (inst.action) {
           case 'fill_text':
-            fieldSuccess = this.setInputValue(el, inst.value);
+            fieldSuccess = this.setInputValue(el, valToFill);
             if (fieldSuccess) filledCount++;
             break;
 
           case 'select_option':
-            fieldSuccess = await this.setSelectValue(el, inst.value);
+            fieldSuccess = await this.setSelectValue(el, valToFill);
             if (fieldSuccess) filledCount++;
             break;
 
           case 'click_radio':
-            fieldSuccess = this.clickRadioOption(el, inst.value);
+            fieldSuccess = this.clickRadioOption(el, valToFill);
             if (fieldSuccess) filledCount++;
             break;
 
@@ -161,6 +182,95 @@ export class DOMFiller {
     // Auto-attach stored resume file into Workday file upload input if present
     const fileAttached = await this.autoAttachResumeFile();
     if (fileAttached) filledCount++;
+
+    // Fill "How Did You Hear About Us?" LAST so no subsequent Escape/blur clears its multiselect
+    if (candidate) {
+      try {
+        const sourceFilled = await this.fillWorkdaySource();
+        if (sourceFilled) filledCount++;
+        await new Promise((r) => setTimeout(r, 600));
+      } catch (err) {
+        console.warn('[Workday AI] Source fill notice:', err);
+      }
+    }
+
+    // Click outside / background to commit all fields (NO Escape key — it clears multiselect selections)
+    try {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      const outsideTarget = document.querySelector<HTMLElement>(
+        '[data-automation-id="smartDivider"], [data-automation-id="pageHeader"], h3, h4, body'
+      );
+      if (outsideTarget) {
+        outsideTarget.click();
+      }
+    } catch { }
+
+    // Continuous loop for auto-saving until all errors are cleared and next page is reached
+    await new Promise((r) => setTimeout(r, 600));
+    try {
+      console.log('[Workday AI] Starting Auto-Save & Next Page navigation loop...');
+      const initialStep = document.querySelector<HTMLElement>('[data-automation-id="activeStep"], [aria-current="step"], h2, h3')?.textContent?.trim() || '';
+
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        console.log(`[Workday AI] Auto-Save attempt #${attempt}...`);
+        
+        // 1. Check for any top error banner first
+        const errorContainer = document.querySelector<HTMLElement>(
+          '[data-automation-id="errorHeading"], [data-automation-id="error-banner"], .css-chz2yv, .css-1lxwves, [data-automation-id="errorMessage"]'
+        );
+        if (errorContainer && (errorContainer.textContent || '').trim().length > 0) {
+          console.log(`[Workday AI] Found error banner on attempt #${attempt}. Resolving specific errors...`);
+          if (candidate) {
+            await this.autoSolveDOMErrors(candidate);
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+
+        // 2. Locate and click Save and Continue / Next button
+        const nextBtn = document.querySelector<HTMLElement>(
+          '[data-automation-id="bottom-navigation-next-button"], [data-automation-id="next"], [data-automation-id*="pageFooterNextButton"], [data-automation-id*="click-save-and-continue"], button[aria-label*="Save and Continue"], button[aria-label*="Save & Continue"], button[aria-label*="Continue"], button[aria-label*="Next"]'
+        ) || Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]')).find((b) => {
+          const t = (b.textContent || '').toLowerCase().trim();
+          return t.includes('save and continue') || t.includes('save & continue') || t === 'continue' || t === 'next';
+        }) || null;
+
+        if (!nextBtn) {
+          console.log('[Workday AI] Save and Continue button no longer on page. Navigation complete! ✓');
+          break;
+        }
+
+        nextBtn.focus();
+        nextBtn.click();
+        nextBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        nextBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+        // 3. Wait to observe if page navigated or if an error popped up
+        await new Promise((r) => setTimeout(r, 1800));
+
+        // Check if page navigated
+        const currentStep = document.querySelector<HTMLElement>('[data-automation-id="activeStep"], [aria-current="step"], h2, h3')?.textContent?.trim() || '';
+        const hasNextButtonStill = !!document.querySelector<HTMLElement>('[data-automation-id="bottom-navigation-next-button"], [data-automation-id="next"], [data-automation-id*="click-save-and-continue"]');
+        
+        const errorsNow = document.querySelector<HTMLElement>(
+          '[data-automation-id="errorHeading"], [data-automation-id="error-banner"], .css-chz2yv, .css-1lxwves'
+        );
+
+        if (!errorsNow && (currentStep !== initialStep || !hasNextButtonStill)) {
+          console.log('[Workday AI] Successfully transitioned to next page without errors! ✓');
+          break;
+        }
+
+        if (errorsNow && candidate) {
+          console.log('[Workday AI] Error detected after click. Auto-resolving...');
+          await this.autoSolveDOMErrors(candidate);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+    } catch (e) {
+      console.warn('[Workday AI] Auto Save & Continue navigation loop notice:', e);
+    }
 
     return { filledCount, errorsCount };
   }
@@ -1391,11 +1501,30 @@ export class DOMFiller {
 
     if (!phoneCodeEl) return false;
 
-    // Check if already selected (e.g. contains "+91" or "India")
+    // Check if ALREADY HAS A SELECTED PILL / TAG / VALUE
     const phoneContainer = phoneCodeEl.closest('[data-automation-id*="formField"], div.css-7t35fz, fieldset') || phoneCodeEl.parentElement;
-    const containerTxt = (phoneContainer?.textContent || phoneCodeEl.textContent || phoneCodeEl.getAttribute('value') || '').trim();
-    if (containerTxt && (containerTxt.includes('+91') || containerTxt.includes('India'))) {
-      console.log('[Workday AI] Country Phone Code ALREADY selected as India (+91) ✓');
+    const selectedItems = phoneContainer?.querySelector('[data-automation-id="selectedItemsList"], [data-automation-id="selectedItemList"]');
+    const hasPill = selectedItems && selectedItems.children.length > 0;
+    const ariaInstruction = phoneContainer?.querySelector('[data-automation-id="promptAriaInstruction"]');
+    const ariaText = (ariaInstruction?.textContent || '').toLowerCase();
+    const hasSelectedAria = ariaText.includes('item selected') && !ariaText.includes('0 items');
+
+    // Check promptSelectionLabel for existing text (Workday shows selected value here)
+    const phoneSelectionLabel = phoneContainer?.querySelector('[data-automation-id="promptSelectionLabel"]');
+    const phoneSelectionText = (phoneSelectionLabel?.textContent || '').trim();
+    const hasSelectionLabel = phoneSelectionText.length > 0;
+
+    // Check if button already displays a selected country (e.g. "India (+91)")
+    const phoneBtn = phoneContainer?.querySelector<HTMLElement>('button[aria-haspopup]');
+    const phoneBtnText = (phoneBtn?.textContent || '').trim().toLowerCase();
+    const hasBtnSelection = phoneBtnText.length > 0 && phoneBtnText !== 'search' && phoneBtnText !== 'select one' && (phoneBtnText.includes('(+') || phoneBtnText.includes('india') || phoneBtnText.includes('united'));
+
+    // Check if the search input already has a value
+    const phoneInputEl = phoneContainer?.querySelector<HTMLInputElement>('input');
+    const hasInputValue = phoneInputEl && phoneInputEl.value && phoneInputEl.value.trim().length > 0 && phoneInputEl.value.toLowerCase() !== 'search';
+
+    if (hasPill || hasSelectedAria || hasSelectionLabel || hasBtnSelection || hasInputValue) {
+      console.log(`[Workday AI] Country Phone Code ALREADY filled (pill=${hasPill}, aria=${hasSelectedAria}, label="${phoneSelectionText}", btn="${phoneBtnText}", inputVal="${phoneInputEl?.value || ''}"). Skipping! ✓`);
       return true;
     }
 
@@ -1407,62 +1536,210 @@ export class DOMFiller {
 
     if (!searchInp) return false;
 
-    console.log('[Workday AI] Country Phone Code: Typing "India" in search box...');
-    searchInp.focus();
-    this.clickWorkdayOptionElement(searchInp);
-    this.setInputValue(searchInp, 'India');
+    // Step 1: Click the multiSelectContainer to open the dropdown
+    console.log('[Workday AI] Country Phone Code: Clicking multiSelectContainer to open dropdown...');
+    const multiSelectContainer = phoneContainer?.querySelector<HTMLElement>(
+      '[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"]'
+    ) || phoneContainer?.querySelector<HTMLElement>(
+      '[data-automation-id="multiselectInputContainer"]'
+    );
+    if (multiSelectContainer) {
+      this.clickWorkdayOptionElement(multiSelectContainer);
+    }
+    await new Promise((r) => setTimeout(r, 500));
 
-    // Press Enter key
-    searchInp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    searchInp.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    // Step 2: Re-query the search input (may have changed after dropdown opened / monikerSearchBox appeared)
+    const activeSearchInp = (phoneContainer?.querySelector<HTMLInputElement>(
+      'input[data-automation-id="searchBox"], input[id="phoneNumber--countryPhoneCode"]'
+    ) || document.querySelector<HTMLInputElement>(
+      '#phoneNumber--countryPhoneCode'
+    ) || searchInp) as HTMLInputElement;
 
-    // Wait 4 seconds as requested by the user
-    console.log('[Workday AI] Waiting 4 seconds for Country Phone Code options to load...');
-    await new Promise((r) => setTimeout(r, 4000));
+    // Step 3: Click and focus the search input
+    console.log('[Workday AI] Country Phone Code: Clicking search input and typing "India"...');
+    this.clickWorkdayOptionElement(activeSearchInp);
+    activeSearchInp.focus();
+    activeSearchInp.dispatchEvent(new Event('focus', { bubbles: true }));
+    activeSearchInp.dispatchEvent(new Event('focusin', { bubbles: true }));
 
-    // Scan filtered options for "India (+91)"
-    const listOptions = Array.from(document.querySelectorAll<HTMLElement>(
-      '[data-automation-id="promptOption"], [data-automation-id="menuItem"], [role="option"], li[role="option"], div[data-automation-label]'
-    ));
+    // Step 4: Type "India" WITHOUT blurring (setInputValue blurs, which closes the dropdown)
+    const tracker = (activeSearchInp as any)._reactValueTracker;
+    if (tracker) tracker.setValue('');
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (nativeSetter) {
+      nativeSetter.call(activeSearchInp, 'India');
+    } else {
+      activeSearchInp.value = 'India';
+    }
+    activeSearchInp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'India' }));
+    activeSearchInp.dispatchEvent(new Event('input', { bubbles: true }));
+    activeSearchInp.dispatchEvent(new Event('change', { bubbles: true }));
 
-    let match = listOptions.find((opt) => {
-      const txt = (opt.getAttribute('data-automation-label') || opt.getAttribute('aria-label') || opt.textContent || '').toLowerCase().trim();
-      if (txt.includes('british indian ocean')) return false;
-      return (txt.includes('india') && (txt.includes('+91') || txt.startsWith('india'))) || txt.includes('+91');
-    }) || listOptions.find((opt) => {
-      const txt = (opt.getAttribute('data-automation-label') || opt.getAttribute('aria-label') || opt.textContent || '').toLowerCase().trim();
-      return !txt.includes('british indian ocean') && txt.includes('india');
+    // Step 5: Press Enter key with complete event properties to trigger search
+    console.log('[Workday AI] Dispatching Enter key to filter Country Phone Code for India...');
+    const enterDown = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      charCode: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true
     });
+    const enterPress = new KeyboardEvent('keypress', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      charCode: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    });
+    const enterUp = new KeyboardEvent('keyup', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      charCode: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    });
+    activeSearchInp.dispatchEvent(enterDown);
+    activeSearchInp.dispatchEvent(enterPress);
+    activeSearchInp.dispatchEvent(enterUp);
+
+    // Also trigger form submit or change if listened
+    activeSearchInp.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Step 6: Wait and poll up to 5 seconds for filtered options to load
+    console.log('[Workday AI] Waiting and polling for Country Phone Code options...');
+    let match: HTMLElement | null = null;
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise((r) => setTimeout(r, 500));
+
+      const listOptions = Array.from(document.querySelectorAll<HTMLElement>(
+        '[data-automation-id="promptLeafNode"], [data-automation-id="promptOption"], [data-automation-id="menuItem"], [role="option"], li[role="option"], div[data-automation-label]'
+      ));
+
+      match = listOptions.find((opt) => {
+        const txt = (opt.getAttribute('data-automation-label') || opt.getAttribute('aria-label') || opt.textContent || '').toLowerCase().trim();
+        if (txt.includes('british indian ocean')) return false;
+        return (txt.includes('india') && (txt.includes('+91') || txt.startsWith('india'))) || (txt.includes('+91') && !txt.includes('ocean'));
+      }) || listOptions.find((opt) => {
+        const txt = (opt.getAttribute('data-automation-label') || opt.getAttribute('aria-label') || opt.textContent || '').toLowerCase().trim();
+        return !txt.includes('british indian ocean') && txt.includes('india');
+      }) || null;
+
+      if (match) {
+        console.log(`[Workday AI] Found Country Phone Code option: "${match.getAttribute('data-automation-label') || match.textContent?.trim()}"`);
+        break;
+      }
+    }
 
     if (match) {
-      console.log(`[Workday AI] Country Phone Code: Clicking matched option "${match.getAttribute('data-automation-label') || match.textContent?.trim()}"...`);
-      const radioBtn = match.querySelector<HTMLInputElement>('input[data-automation-id="radioBtn"], input[type="radio"]');
+      console.log(`[Workday AI] Country Phone Code: Clicking radioBtn & leaf node in "${match.getAttribute('data-automation-label') || match.textContent?.trim()}"...`);
+
+      const leafNode = match.getAttribute('data-automation-id') === 'promptLeafNode' ? match : (match.closest<HTMLElement>('[data-automation-id="promptLeafNode"]') || match);
+      const radioBtn = leafNode.querySelector<HTMLInputElement>('input[data-automation-id="radioBtn"], input[type="radio"]') || match.querySelector<HTMLInputElement>('input[data-automation-id="radioBtn"], input[type="radio"]');
+      const radioSpan = leafNode.querySelector<HTMLElement>('span.css-1fzhg67, .css-rkll8q');
+
       if (radioBtn) {
         radioBtn.focus();
         this.clickWorkdayOptionElement(radioBtn);
+        radioBtn.checked = true;
+        radioBtn.setAttribute('aria-checked', 'true');
+        radioBtn.dispatchEvent(new Event('input', { bubbles: true }));
         radioBtn.dispatchEvent(new Event('change', { bubbles: true }));
+        radioBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       }
-      const leafNode = match.closest<HTMLElement>('[data-automation-id="promptLeafNode"]') || match;
+
+      if (radioSpan) {
+        this.clickWorkdayOptionElement(radioSpan);
+      }
+
       this.clickWorkdayOptionElement(leafNode);
       this.clickWorkdayOptionElement(match);
 
-      // Click multiselectInputContainer next to the tag to confirm selection
-      const inputContainer = phoneContainer?.querySelector<HTMLElement>(
-        '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
-      );
-      if (inputContainer) {
-        console.log('[Workday AI] Clicking multiselectInputContainer to confirm Country Phone Code selection...');
-        this.clickWorkdayOptionElement(inputContainer);
-      }
+      leafNode.setAttribute('data-uxi-multiselectlistitem-isselected', 'true');
+      leafNode.setAttribute('data-automation-checked', 'Checked');
 
+      await new Promise((r) => setTimeout(r, 600));
+
+      // Click outside on Phone Number label / smartDivider / background to confirm selection
+      console.log('[Workday AI] Clicking outside on next field to confirm Country Phone Code selection...');
       try {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+        const outsideTarget = document.querySelector<HTMLElement>(
+          'label[for="phoneNumber--phoneNumber"], [data-automation-id="formField-phoneNumber"] label, [data-automation-id="smartDivider"], h4#Phone-section'
+        );
+        if (outsideTarget) {
+          outsideTarget.focus?.();
+          this.clickWorkdayOptionElement(outsideTarget);
+        }
+        // NOTE: Do NOT dispatch Escape on document — it clears other multiselect fields (e.g. Source)
       } catch { }
+
       await new Promise((r) => setTimeout(r, 600));
       return true;
     }
 
     return false;
+  }
+
+  public static async fillWorkdayPreviousWorker(): Promise<boolean> {
+    const radioContainers = Array.from(document.querySelectorAll<HTMLElement>(
+      '[data-automation-id="formField-candidateIsPreviousWorker"], [data-fkit-id*="previousWorker"], [name="candidateIsPreviousWorker"], fieldset'
+    ));
+
+    const targetContainer = radioContainers.find((c) => {
+      const txt = (c.textContent || '').toLowerCase();
+      return txt.includes('previously worked') || txt.includes('previous worker') || txt.includes('employee or contractor');
+    }) || document.querySelector<HTMLElement>('[data-automation-id="formField-candidateIsPreviousWorker"]') || null;
+
+    if (targetContainer) {
+      console.log('[Workday AI] Selecting "No" for Have you previously worked question...');
+      const success = this.clickRadioOption(targetContainer, 'No');
+      if (success) {
+        return true;
+      }
+    }
+
+    // Direct fallback for input with value="false" and name containing previousWorker
+    const noRadio = document.querySelector<HTMLInputElement>(
+      'input[type="radio"][name*="candidateIsPreviousWorker"][value="false"], input[type="radio"][name*="previousWorker"][value="false"]'
+    );
+   if (noRadio) {
+  console.log(
+    '[Workday AI] Previous Worker fallback: selecting No with ONE click...'
+  );
+
+  if (
+    !noRadio.checked &&
+    noRadio.getAttribute('aria-checked') !== 'true'
+  ) {
+    this.clickWorkdayOptionElement(noRadio);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  return (
+    noRadio.checked ||
+    noRadio.getAttribute('aria-checked') === 'true'
+  );
+}
+
+    return false;
+  }
+
+  private static formatProperCase(str: string): string {
+    if (!str) return str;
+    return str
+      .trim()
+      .split(/\s+/)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
   }
 
   private static resolveGenderFromName(firstName?: string, fullName?: string): string {
@@ -1711,17 +1988,19 @@ export class DOMFiller {
     if (!sourceContainer) return false;
 
     // Check if ALREADY HAS A SELECTED PILL / TAG / VALUE
-    const selectedItems = sourceContainer.querySelector('[data-automation-id="selectedItemsList"]');
+    const selectedItems = sourceContainer.querySelector('[data-automation-id="selectedItemsList"], [data-automation-id="selectedItemList"]');
     const hasPill = selectedItems && selectedItems.children.length > 0;
-    const promptLabel = sourceContainer.querySelector('[data-automation-id="promptSelectionLabel"]');
-    const labelText = (promptLabel?.textContent || '').trim();
-    const hasSelectedLabel = labelText.length > 0;
     const ariaInstruction = sourceContainer.querySelector('[data-automation-id="promptAriaInstruction"]');
     const ariaText = (ariaInstruction?.textContent || '').toLowerCase();
-    const hasSelectedAria = ariaText.includes('item') && !ariaText.includes('0 items');
+    const hasSelectedAria = ariaText.includes('item selected') && !ariaText.includes('0 items');
 
-    if (hasPill || hasSelectedLabel || hasSelectedAria) {
-      console.log('[Workday AI] Source field ALREADY HAS A SELECTED VALUE. DO NOT TOUCH! ✓');
+    // Also check promptSelectionLabel for existing text
+    const sourceSelectionLabel = sourceContainer.querySelector('[data-automation-id="promptSelectionLabel"]');
+    const sourceSelectionText = (sourceSelectionLabel?.textContent || '').trim();
+    const hasSelectionLabel = sourceSelectionText.length > 0;
+
+    if (hasPill || hasSelectedAria || hasSelectionLabel) {
+      console.log(`[Workday AI] Source field ALREADY HAS A SELECTED VALUE (pill=${hasPill}, aria=${hasSelectedAria}, label="${sourceSelectionText}"). DO NOT TOUCH! ✓`);
       return true;
     }
 
@@ -1732,66 +2011,69 @@ export class DOMFiller {
 
     if (!searchInp) return false;
 
-    // 1. Focus & type "Facebook" into search input
-    console.log('[Workday AI] How Did You Hear About Us?: Typing "Facebook" in search box...');
-    searchInp.focus();
+    // Step 1: Click the search input to activate/focus it
+    console.log('[Workday AI] How Did You Hear About Us?: Clicking search input to activate...');
     this.clickWorkdayOptionElement(searchInp);
-    this.setInputValue(searchInp, 'Facebook');
+    searchInp.focus();
+    searchInp.dispatchEvent(new Event('focus', { bubbles: true }));
+    searchInp.dispatchEvent(new Event('focusin', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 500));
 
-    // 2. Press Enter key
-    searchInp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    searchInp.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-
-    // 3. Wait 4 seconds as requested by the user
-    console.log('[Workday AI] Waiting 4 seconds for filtered options to load...');
-    await new Promise((r) => setTimeout(r, 4000));
-
-    // 4. Select/click the option "Facebook" (or Twitter / Social Media)
-    const options = Array.from(document.querySelectorAll<HTMLElement>(
-      '[data-automation-id="promptOption"], [data-automation-id="menuItem"], [role="option"], div[data-automation-label]'
-    ));
-
-    let match = options.find((opt) => {
-      const txt = (opt.getAttribute('data-automation-label') || opt.getAttribute('aria-label') || opt.textContent || '').toLowerCase().trim();
-      return txt.includes('facebook') || txt.includes('twitter') || txt.includes('social media');
-    });
-
-    if (!match && options.length > 0) {
-      match = options[0];
+    // Step 2: Type "Facebook" using React-compatible native setter (no blur)
+    console.log('[Workday AI] How Did You Hear About Us?: Typing "Facebook" in search input...');
+    const tracker = (searchInp as any)._reactValueTracker;
+    if (tracker) tracker.setValue('');
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (nativeSetter) {
+      nativeSetter.call(searchInp, 'Facebook');
+    } else {
+      searchInp.value = 'Facebook';
     }
+    searchInp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Facebook' }));
+    searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+    searchInp.dispatchEvent(new Event('change', { bubbles: true }));
 
-    if (match) {
-      console.log(`[Workday AI] How Did You Hear About Us?: Clicking option "${match.getAttribute('data-automation-label') || match.textContent?.trim()}"...`);
-      const radioBtn = match.querySelector<HTMLInputElement>('input[data-automation-id="radioBtn"], input[type="radio"]');
-      if (radioBtn) {
-        radioBtn.focus();
-        this.clickWorkdayOptionElement(radioBtn);
-        radioBtn.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      const leafNode = match.closest<HTMLElement>('[data-automation-id="promptLeafNode"]') || match;
-      this.clickWorkdayOptionElement(leafNode);
-      this.clickWorkdayOptionElement(match);
+    // Step 3: Wait for Workday to filter the dropdown options
+    console.log('[Workday AI] How Did You Hear About Us?: Waiting for filtered results...');
+    await new Promise((r) => setTimeout(r, 2000));
 
-      // Click multiselectInputContainer next to the tag (as circled by user) to confirm selection
-      const inputContainer = sourceContainer.querySelector<HTMLElement>(
-        '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"]'
-      );
-      if (inputContainer) {
-        console.log('[Workday AI] Clicking multiselectInputContainer next to Facebook tag to confirm selection...');
-        this.clickWorkdayOptionElement(inputContainer);
-      }
+    // Step 4: Press Enter to select the filtered result
+    console.log('[Workday AI] How Did You Hear About Us?: Pressing Enter to select...');
+    const enterOpts: KeyboardEventInit = {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      charCode: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    };
+    searchInp.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+    searchInp.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+    searchInp.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
 
-      try {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
-      } catch { }
-      await new Promise((r) => setTimeout(r, 600));
-      return true;
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Step 5: Click outside to confirm selection and close dropdown
+    console.log('[Workday AI] How Did You Hear About Us?: Clicking outside to confirm...');
+    searchInp.blur();
+    const outsideTarget = document.querySelector<HTMLElement>(
+      '[data-automation-id="formField-candidateIsPreviousWorker"], [data-automation-id="smartDivider"], [data-automation-id="pageHeader"], h3, h4, body'
+    );
+    if (outsideTarget) {
+      outsideTarget.focus?.();
+      this.clickWorkdayOptionElement(outsideTarget);
     }
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
 
-    return false;
+    await new Promise((r) => setTimeout(r, 800));
+
+    console.log('[Workday AI] How Did You Hear About Us?: Facebook selection completed. ✓');
+    return true;
   }
 
-  private static clickWorkdayOptionElement(el: HTMLElement): void {
+  public static clickWorkdayOptionElement(el: HTMLElement): void {
     try {
       el.focus();
       el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
@@ -2157,64 +2439,112 @@ export class DOMFiller {
     }
   }
 
-  public static clickRadioOption(containerOrInput: HTMLElement, optionText: string): boolean {
-    try {
-      const optLower = (optionText || 'no').toLowerCase();
-      const isTargetYes = optLower === 'yes' || optLower === 'true';
 
-      let inputs = Array.from(containerOrInput.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
+  public static clickRadioOption(
+  containerOrInput: HTMLElement,
+  optionText: string
+): boolean {
+  try {
+    const target = (optionText || 'No').trim().toLowerCase();
 
-      // If container didn't contain inputs directly, query by name attribute or ID
-      if (inputs.length === 0) {
-        const nameAttr = containerOrInput.getAttribute('name') || containerOrInput.getAttribute('data-automation-id') || containerOrInput.id || '';
-        if (nameAttr) {
-          const cleanName = nameAttr.replace(/^formField-/, '');
-          inputs = Array.from(document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name*="${cleanName}"], input[type="radio"]`));
-        }
-      }
+    // We specifically want "No" / false for this Workday question.
+    const wantNo =
+      target === 'no' ||
+      target === 'false';
 
-      if (inputs.length === 0) {
-        // Broad query across all radio inputs on page
-        inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
-      }
+    const container =
+      containerOrInput.closest<HTMLElement>(
+        '[data-automation-id="formField-candidateIsPreviousWorker"]'
+      ) ||
+      containerOrInput;
 
-      for (const input of inputs) {
-        const val = (input.value || '').toLowerCase();
-        const labelEl = document.querySelector<HTMLLabelElement>(`label[for="${input.id}"]`);
-        const radioWrapper = input.closest('.css-1utp272, label, div[class*="utp"], fieldset > div') || input.parentElement;
+    const inputs = Array.from(
+      container.querySelectorAll<HTMLInputElement>(
+        'input[type="radio"][name="candidateIsPreviousWorker"], ' +
+        'input[type="radio"]'
+      )
+    );
 
-        const labelText = ((labelEl?.textContent || radioWrapper?.textContent || '')).toLowerCase();
-
-        const isNoMatch = (!isTargetYes && (val === 'false' || labelText.includes('no')));
-        const isYesMatch = (isTargetYes && (val === 'true' || labelText.includes('yes')));
-
-        if (isNoMatch || isYesMatch || labelText.includes(optLower)) {
-          // Trigger mouse click on label element
-          if (labelEl) {
-            this.clickWorkdayOptionElement(labelEl);
-          }
-          // Trigger mouse click on outer radio wrapper container
-          if (radioWrapper) {
-            this.clickWorkdayOptionElement(radioWrapper as HTMLElement);
-          }
-          // Trigger mouse click directly on input element
-          this.clickWorkdayOptionElement(input);
-
-          // Force React checked state update
-          input.checked = true;
-          input.setAttribute('aria-checked', 'true');
-          input.dispatchEvent(new Event('click', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-          input.dispatchEvent(new Event('blur', { bubbles: true }));
-          return true;
-        }
-      }
-
-      return false;
-    } catch {
+    if (inputs.length === 0) {
+      console.warn(
+        '[Workday AI] Previous Worker: No radio buttons found.'
+      );
       return false;
     }
+
+    // Find ONLY the requested radio.
+    const targetInput = inputs.find((input) => {
+      const value = (input.value || '').toLowerCase().trim();
+
+      const label = document.querySelector<HTMLLabelElement>(
+        `label[for="${input.id}"]`
+      );
+
+      const labelText =
+        (label?.textContent || '').toLowerCase().trim();
+
+      if (wantNo) {
+        return (
+          value === 'false' ||
+          labelText === 'no'
+        );
+      }
+
+      return (
+        value === 'true' ||
+        labelText === 'yes'
+      );
+    });
+
+    if (!targetInput) {
+      console.warn(
+        `[Workday AI] Previous Worker: Could not find "${optionText}" radio.`
+      );
+      return false;
+    }
+
+    // If already selected, DO NOTHING.
+    if (
+      targetInput.checked === true ||
+      targetInput.getAttribute('aria-checked') === 'true'
+    ) {
+      console.log(
+        `[Workday AI] Previous Worker: "${optionText}" is already selected.`
+      );
+      return true;
+    }
+
+    console.log(
+      `[Workday AI] Previous Worker: Selecting "${optionText}" with ONE click...`
+    );
+
+    // IMPORTANT:
+    // Click ONLY the target input once.
+    // Do NOT click label + wrapper + input.
+    this.clickWorkdayOptionElement(targetInput);
+
+    // Give Workday/React time to update.
+    setTimeout(() => {
+      // Only verify. Do NOT click again.
+      const currentChecked =
+        targetInput.checked ||
+        targetInput.getAttribute('aria-checked') === 'true';
+
+      console.log(
+        `[Workday AI] Previous Worker: "${optionText}" selected = ${currentChecked}`
+      );
+    }, 500);
+
+    return true;
+
+  } catch (error) {
+    console.warn(
+      '[Workday AI] Previous Worker radio selection failed:',
+      error
+    );
+    return false;
   }
+}
 
   public static setCheckboxValue(element: HTMLElement, checked: boolean): boolean {
     try {
@@ -2236,9 +2566,124 @@ export class DOMFiller {
     }
   }
 
+  public static solveAllDateErrors(): number {
+    let count = 0;
+    try {
+      const calendarIcons = Array.from(document.querySelectorAll<HTMLElement>(
+        '[data-automation-id*="date-picker-icon"], [data-automation-id*="calendarIcon"], button[aria-label*="Calendar"], svg[data-uxi-glyph-id="calendar"]'
+      ));
+      for (const icon of calendarIcons) {
+        try {
+          icon.click();
+          count++;
+        } catch { }
+      }
+    } catch { }
+    return count;
+  }
+
+  public static async fillWorkdayCreateAccount(email?: string, password?: string): Promise<number> {
+    let filled = 0;
+    if (!email && !password) return filled;
+
+    if (email) {
+      const emailField = document.querySelector<HTMLInputElement>(
+        'input[data-automation-id="email"], input[type="email"], input[name="username"], input[data-automation-id="userName"]'
+      );
+      if (emailField) {
+        const ok = this.setInputValue(emailField, email);
+        if (ok) filled++;
+      }
+    }
+
+    if (password) {
+      const passField = document.querySelector<HTMLInputElement>(
+        'input[data-automation-id="password"], input[type="password"], input[name="password"]'
+      );
+      if (passField) {
+        const ok = this.setInputValue(passField, password);
+        if (ok) filled++;
+      }
+
+      const verifyPassField = document.querySelector<HTMLInputElement>(
+        'input[data-automation-id="verifyPassword"], input[name="verifyPassword"], input[data-automation-id="confirmPassword"]'
+      );
+      if (verifyPassField) {
+        const ok = this.setInputValue(verifyPassField, password);
+        if (ok) filled++;
+      }
+      const agreeCheck = document.querySelector<HTMLInputElement>(
+        'input[type="checkbox"][data-automation-id="createAccountCheckbox"], input[type="checkbox"][data-automation-id*="createAccount"], input[type="checkbox"][data-automation-id*="agreement"], input[type="checkbox"][data-automation-id*="terms"], input[type="checkbox"][id*="agreement"], input[type="checkbox"][id*="terms"]'
+      );
+      if (agreeCheck && !agreeCheck.checked) {
+        const ok = this.setCheckboxValue(agreeCheck, true);
+        if (ok) filled++;
+      }
+    }
+
+    // Also check for agreement checkbox independently in case only email or account fill was triggered
+    const agreeCheckFallback = document.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-automation-id="createAccountCheckbox"], input[type="checkbox"][data-automation-id*="createAccountCheckbox"], input[type="checkbox"][data-automation-id*="agreement"], input[type="checkbox"][data-automation-id*="terms"], input[type="checkbox"][id*="agreement"], input[type="checkbox"][id*="terms"]'
+    );
+    if (agreeCheckFallback && !agreeCheckFallback.checked) {
+      this.setCheckboxValue(agreeCheckFallback, true);
+    }
+
+    return filled;
+  }
+
   public static async autoSolveDOMErrors(candidate: CandidateProfile): Promise<number> {
-    console.log('[Workday AI] Form data filled cleanly in 1st pass. Skipping secondary DOM edits.');
-    return 0;
+    console.log('[Workday AI] Checking top-of-page error banner...');
+    let fixed = 0;
+
+    // Detect Workday top error box / error heading
+    const errorContainer = document.querySelector<HTMLElement>(
+      '[data-automation-id="errorHeading"], [data-automation-id="error-banner"], .css-chz2yv, .css-1lxwves'
+    );
+    const errorText = (errorContainer?.textContent || '').toLowerCase();
+
+    if (!errorContainer || !errorText) {
+      console.log('[Workday AI] No top-of-page errors found.');
+      return 0;
+    }
+
+    console.log(`[Workday AI] Top error detected: "${errorText.trim().slice(0, 100)}..."`);
+
+    // Fix ONLY the specific error identified without touching anything else!
+    if (errorText.includes('country phone code') || errorText.includes('phone code')) {
+      console.log('[Workday AI] Resolving missing Country Phone Code error specifically...');
+      const phoneFixed = await this.fillWorkdayCountryPhoneCode(candidate);
+      if (phoneFixed) fixed++;
+      await new Promise((r) => setTimeout(r, 600));
+    }
+
+    if (errorText.includes('how did you hear') || errorText.includes('source')) {
+      console.log('[Workday AI] Resolving missing How Did You Hear About Us error specifically...');
+      const sourceFixed = await this.fillWorkdaySource();
+      if (sourceFixed) fixed++;
+      await new Promise((r) => setTimeout(r, 600));
+    }
+
+    // Try auto-clicking Save and Continue / Next after resolving the specific error
+    if (fixed > 0) {
+      console.log('[Workday AI] Specific error fixed! Triggering Save & Continue button...');
+      await new Promise((r) => setTimeout(r, 800));
+      const nextBtn = document.querySelector<HTMLElement>(
+        '[data-automation-id="bottom-navigation-next-button"], [data-automation-id="next"], [data-automation-id*="pageFooterNextButton"], [data-automation-id*="click-save-and-continue"], button[aria-label*="Save and Continue"], button[aria-label*="Save & Continue"], button[aria-label*="Continue"], button[aria-label*="Next"]'
+      ) || Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]')).find((b) => {
+        const t = (b.textContent || '').toLowerCase().trim();
+        return t.includes('save and continue') || t.includes('save & continue') || t === 'continue' || t === 'next';
+      }) || null;
+
+      if (nextBtn) {
+        nextBtn.focus();
+        nextBtn.click();
+        nextBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        nextBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      }
+    }
+
+    return fixed;
   }
 
   /**

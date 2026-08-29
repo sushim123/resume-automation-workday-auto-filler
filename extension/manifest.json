@@ -12,7 +12,8 @@
   "host_permissions": [
     "https://*.myworkdayjobs.com/*",
     "https://*.workday.com/*",
-    "http://localhost:3000/*"
+    
+    "https://resume-automation-workday-auto-fill.vercel.app"
   ],
   "side_panel": {
     "default_path": "index.html"

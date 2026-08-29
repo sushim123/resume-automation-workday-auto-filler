@@ -40,7 +40,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'PING_SERVER') {
-    fetch('http://localhost:3000/api/health')
+    fetch( "https://resume-automation-workday-auto-fill.vercel.app/api/health")
       .then((res) => res.json())
       .then((data) => sendResponse({ success: true, data }))
       .catch((err) => sendResponse({ success: false, error: err.message }));

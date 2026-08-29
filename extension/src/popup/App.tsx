@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { CandidateProfile, StepStatus } from '../types';
 
-const API_BASE = 'http://localhost:3000';
+const API_BASE = 'https://resume-automation-workday-auto-fill.vercel.app';
 
 const PARSE_STAGES = [
   { label: 'Reading & Extracting PDF / DOCX content...', pct: 8 },
@@ -1224,7 +1224,7 @@ export default function App() {
                 <span className="setting-title">AI Server Endpoint</span>
                 <span className="setting-desc">Local Multi-LLM API Gateway</span>
               </div>
-              <span className="panel-badge emerald">localhost:3000</span>
+              <span className="panel-badge emerald">https://resume-automation-workday-auto-fill.vercel.app/</span>
             </div>
 
             <div className="setting-row">

@@ -120,6 +120,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           nextBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
           nextBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
 
+          // Check if top error banner pops up and auto-solve that exact error
+          setTimeout(async () => {
+            try {
+              if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.get(['profile'], async (res) => {
+                  if (res?.profile) {
+                    await DOMFiller.autoSolveDOMErrors(res.profile);
+                  }
+                });
+              }
+            } catch {}
+          }, 1200);
+
           sendResponse({ success: true, message: 'Triggered Save & Continue step navigation' });
         } catch (err: any) {
           sendResponse({ success: false, message: `Click error: ${err.message}` });
@@ -244,7 +257,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const { email, password } = message.payload || {};
       DOMFiller.fillWorkdayCreateAccount(email, password).then((count) => {
         const agreementCb = document.querySelector<HTMLInputElement>(
-          'input[type="checkbox"][data-automation-id*="agreement"], input[type="checkbox"][data-automation-id*="terms"], input[type="checkbox"][id*="agreement"], input[type="checkbox"][id*="terms"]'
+          'input[type="checkbox"][data-automation-id="createAccountCheckbox"], input[type="checkbox"][data-automation-id*="createAccount"], input[type="checkbox"][data-automation-id*="agreement"], input[type="checkbox"][data-automation-id*="terms"], input[type="checkbox"][id*="agreement"], input[type="checkbox"][id*="terms"]'
         );
         if (agreementCb && !agreementCb.checked) {
           DOMFiller.setCheckboxValue(agreementCb, true);
@@ -256,13 +269,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case 'SUBMIT_CREATE_ACCOUNT': {
       let btn = document.querySelector<HTMLElement>(
-        'button[data-automation-id="createAccountSubmitButton"], button[data-automation-id*="createAccountSubmit"], [data-automation-id*="createAccount"] button'
+        'div[data-automation-id="click_filter"][aria-label*="Create Account"], button[data-automation-id="createAccountSubmitButton"], button[data-automation-id*="createAccountSubmit"], [data-automation-id*="createAccount"] button, [data-automation-id*="createAccount"] [role="button"]'
       );
 
       if (!btn) {
         const candidates = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], input[type="submit"]'));
         btn = candidates.find((el) => {
-          const txt = (el.textContent || el.getAttribute('value') || '').toLowerCase().trim();
+          const txt = (el.textContent || el.getAttribute('value') || el.getAttribute('aria-label') || '').toLowerCase().trim();
           return txt.includes('create account');
         }) || null;
       }
@@ -270,6 +283,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (btn) {
         try {
           DOMFiller.clickWorkdayOptionElement(btn);
+
+          // Workday button wrapper: if we clicked the div or button, also trigger adjacent/nested button or container form submit
+          const parentWrapper = btn.closest('.css-1s1r74k, form, div');
+          if (parentWrapper) {
+            const innerBtn = parentWrapper.querySelector<HTMLElement>('button[type="submit"], button[data-automation-id="createAccountSubmitButton"], [data-automation-id="click_filter"]');
+            if (innerBtn && innerBtn !== btn) {
+              DOMFiller.clickWorkdayOptionElement(innerBtn);
+            }
+          }
+          const form = btn.closest('form');
+          if (form) {
+            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          }
+
           sendResponse({ success: true, message: 'Submitted Create Account' });
         } catch (err: any) {
           sendResponse({ success: false, message: `Click error: ${err.message}` });
@@ -282,20 +309,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case 'SUBMIT_SIGN_IN': {
       let btn = document.querySelector<HTMLElement>(
-        'button[data-automation-id="signInSubmitButton"], button[data-automation-id*="signInSubmit"], [data-automation-id*="signIn"] button'
+        'div[data-automation-id="click_filter"][aria-label*="Sign In"], div[data-automation-id="click_filter"][aria-label*="Submit"], button[data-automation-id="signInSubmitButton"], button[data-automation-id*="signInSubmit"], [data-automation-id*="signIn"] button, [data-automation-id*="signIn"] [role="button"]'
       );
 
       if (!btn) {
         const candidates = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], input[type="submit"]'));
         btn = candidates.find((el) => {
-          const txt = (el.textContent || el.getAttribute('value') || '').toLowerCase().trim();
-          return txt.includes('sign in');
+          const txt = (el.textContent || el.getAttribute('value') || el.getAttribute('aria-label') || '').toLowerCase().trim();
+          return txt.includes('sign in') || txt === 'submit';
         }) || null;
       }
 
       if (btn) {
         try {
           DOMFiller.clickWorkdayOptionElement(btn);
+
+          // Workday button wrapper: if we clicked the div or button, also trigger adjacent/nested button or container form submit
+          const parentWrapper = btn.closest('.css-1s1r74k, form, div');
+          if (parentWrapper) {
+            const innerBtn = parentWrapper.querySelector<HTMLElement>('button[type="submit"], button[data-automation-id="signInSubmitButton"], [data-automation-id="click_filter"]');
+            if (innerBtn && innerBtn !== btn) {
+              DOMFiller.clickWorkdayOptionElement(innerBtn);
+            }
+          }
+          const form = btn.closest('form');
+          if (form) {
+            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          }
+
           sendResponse({ success: true, message: 'Submitted Sign In' });
         } catch (err: any) {
           sendResponse({ success: false, message: `Click error: ${err.message}` });

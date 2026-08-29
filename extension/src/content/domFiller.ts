@@ -50,6 +50,10 @@ export class DOMFiller {
         if (phoneCodeFilled) filledCount++;
         await new Promise((r) => setTimeout(r, 600));
 
+        const linkedInFilled = await this.fillWorkdayLinkedIn(candidate);
+        if (linkedInFilled) filledCount++;
+        await new Promise((r) => setTimeout(r, 300));
+
         const addedMulti = await this.ensureMultiEntriesAndFill(candidate);
         filledCount += addedMulti;
         await new Promise((r) => setTimeout(r, 400));
@@ -94,7 +98,19 @@ export class DOMFiller {
         checkStr.includes('title') ||
         checkStr.includes('company') ||
         checkStr.includes('desc') ||
-        checkStr.includes('role')
+        checkStr.includes('role') ||
+        checkStr.includes('gpa') ||
+        checkStr.includes('major') ||
+        checkStr.includes('disability') ||
+        checkStr.includes('ethnicity') ||
+        checkStr.includes('race') ||
+        checkStr.includes('gender') ||
+        checkStr.includes('veteran') ||
+        checkStr.includes('website') ||
+        checkStr.includes('url') ||
+        checkStr.includes('linkedin') ||
+        checkStr.includes('github') ||
+        (inst.action as string) === 'set_date'
       ) {
         console.log(`[Workday AI] Field "${inst.fieldId || inst.automationId}" is handled in Pass 1. Skipping Pass 2 edit ✓`);
         continue;
@@ -562,36 +578,108 @@ export class DOMFiller {
   }
 
   private static findWorkdayAddButton(sectionType: 'work' | 'education' | 'website'): HTMLElement | null {
-    const key = sectionType === 'work' ? 'workexperience' : sectionType === 'education' ? 'education' : 'website';
-    const label = sectionType === 'work' ? 'work experience' : sectionType === 'education' ? 'education' : 'website';
-
-    const directBtn = document.querySelector<HTMLElement>(
-      `button[data-automation-id*="${key}-add"], button[data-automation-id*="add-${key}"], button[data-automation-id*="${key}Add"]`
-    );
-    if (directBtn && !directBtn.getAttribute('data-automation-id')?.toLowerCase().includes('delete')) return directBtn;
-
-    const headings = Array.from(document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, legend, div[data-automation-id], .css-15rz5ap'));
-    const sectionHeading = headings.find((h) => (h.textContent || '').toLowerCase().trim().includes(label));
-
-    if (sectionHeading) {
-      const container = sectionHeading.closest('div[data-automation-id], fieldset, section, div.css-15rz5ap') || sectionHeading.parentElement;
-      if (container) {
-        const btn = Array.from(container.querySelectorAll<HTMLElement>('button')).find((b) => {
-          const txt = (b.textContent || '').toLowerCase().trim();
-          return (txt === 'add' || txt === 'add another' || txt.includes('add')) && !txt.includes('delete');
-        });
-        if (btn) return btn;
-      }
+    if (sectionType === 'education') {
+      return this.findEducationAddButton();
     }
 
-    const allBtns = Array.from(document.querySelectorAll<HTMLElement>('button'));
-    return allBtns.find((b) => {
-      const txt = (b.textContent || '').toLowerCase().trim();
-      if (txt !== 'add' && txt !== 'add another' && !txt.includes('add')) return false;
-      if (txt.includes('delete')) return false;
-      const sectionTxt = (b.closest('div, section, fieldset, form')?.textContent || '').toLowerCase();
-      return sectionTxt.includes(label);
-    }) || null;
+    if (sectionType === 'work') {
+      // 1. Direct Automation ID search for Work Experience Add button
+      const directBtn = document.querySelector<HTMLElement>(
+        'button[data-automation-id*="workExperience-add"], button[data-automation-id*="add-workExperience"], button[data-automation-id*="workExperienceAdd"], button[data-automation-id*="addWorkExperience"], button[data-automation-id*="work-experience-add"]'
+      );
+      if (directBtn && !directBtn.getAttribute('data-automation-id')?.toLowerCase().includes('delete')) return directBtn;
+
+      // 2. Section container search for Work Experience
+      const workSection = document.querySelector<HTMLElement>(
+        '[role="group"][aria-labelledby*="workExperience"], [role="group"][aria-labelledby*="work-experience"], [data-automation-id="workExperienceSection"], [data-automation-id*="workExperience"], fieldset[data-automation-id*="workExperience"]'
+      );
+      if (workSection) {
+        const btns = Array.from(workSection.querySelectorAll<HTMLElement>('button'));
+        const addBtn = btns.find((b) => {
+          const txt = (b.textContent || '').toLowerCase().trim();
+          return (txt === 'add' || txt === 'add another' || txt.startsWith('add')) && !txt.includes('delete');
+        });
+        if (addBtn) return addBtn;
+      }
+
+      // 3. Heading search for Work Experience
+      const workHeading = Array.from(document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, legend')).find((h) => {
+        const txt = (h.textContent || '').toLowerCase().trim();
+        return (txt.includes('work experience') || txt === 'experience') && !txt.includes('education');
+      });
+
+      if (workHeading) {
+        const container = workHeading.closest('[role="group"], fieldset, section') || workHeading.parentElement;
+        if (container) {
+          const btns = Array.from(container.querySelectorAll<HTMLElement>('button'));
+          const addBtn = btns.find((b) => {
+            const txt = (b.textContent || '').toLowerCase().trim();
+            return (txt === 'add' || txt === 'add another' || txt.startsWith('add')) && !txt.includes('delete');
+          });
+          if (addBtn) return addBtn;
+        }
+
+        // Walk siblings after heading
+        let sibling = workHeading.nextElementSibling as HTMLElement | null;
+        for (let depth = 0; sibling && depth < 15; depth++) {
+          if (sibling.tagName === 'BUTTON') {
+            const txt = (sibling.textContent || '').toLowerCase().trim();
+            if ((txt === 'add' || txt.startsWith('add')) && !txt.includes('delete')) return sibling;
+          }
+          const innerBtn = sibling.querySelector<HTMLElement>('button');
+          if (innerBtn) {
+            const txt = (innerBtn.textContent || '').toLowerCase().trim();
+            if ((txt === 'add' || txt.startsWith('add')) && !txt.includes('delete')) return innerBtn;
+          }
+          sibling = sibling.nextElementSibling as HTMLElement | null;
+        }
+      }
+
+      return null;
+    }
+
+    if (sectionType === 'website') {
+      // 1. Direct Automation ID search for Website Add button
+      const directBtn = document.querySelector<HTMLElement>(
+        'button[data-automation-id*="website-add"], button[data-automation-id*="add-website"], button[data-automation-id*="websiteAdd"], button[data-automation-id*="websites-add"], button[data-automation-id*="add-websites"], button[data-automation-id*="websitesAdd"]'
+      );
+      if (directBtn && !directBtn.getAttribute('data-automation-id')?.toLowerCase().includes('delete')) return directBtn;
+
+      // 2. Section container search for Websites
+      const websiteSection = document.querySelector<HTMLElement>(
+        '[role="group"][aria-labelledby*="website"], [role="group"][aria-labelledby*="websites"], [data-automation-id*="website"], [data-automation-id*="websites"]'
+      );
+      if (websiteSection) {
+        const btns = Array.from(websiteSection.querySelectorAll<HTMLElement>('button'));
+        const addBtn = btns.find((b) => {
+          const txt = (b.textContent || '').toLowerCase().trim();
+          return (txt === 'add' || txt === 'add another' || txt.startsWith('add')) && !txt.includes('delete');
+        });
+        if (addBtn) return addBtn;
+      }
+
+      // 3. Heading search for Websites
+      const websiteHeading = Array.from(document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, legend')).find((h) => {
+        const txt = (h.textContent || '').toLowerCase().trim();
+        return (txt === 'websites' || txt === 'website') && !txt.includes('experience') && !txt.includes('education');
+      });
+
+      if (websiteHeading) {
+        const container = websiteHeading.closest('[role="group"], fieldset, section') || websiteHeading.parentElement;
+        if (container) {
+          const btns = Array.from(container.querySelectorAll<HTMLElement>('button'));
+          const addBtn = btns.find((b) => {
+            const txt = (b.textContent || '').toLowerCase().trim();
+            return (txt === 'add' || txt === 'add another' || txt.startsWith('add')) && !txt.includes('delete');
+          });
+          if (addBtn) return addBtn;
+        }
+      }
+
+      return null;
+    }
+
+    return null;
   }
 
   private static findEducationAddButton(): HTMLElement | null {
@@ -834,7 +922,59 @@ export class DOMFiller {
     }
   }
 
+  public static async deleteExtraBlankWorkForms(targetCount: number): Promise<void> {
+    const getWorkBlocks = (): HTMLElement[] => {
+      const selectors = [
+        '[role="group"][aria-labelledby*="workExperience-"]',
+        '[role="group"][aria-labelledby*="workExperience"]',
+        '[data-automation-id*="workExperience-"]',
+        'div[data-fkit-id*="workExperience"]',
+        'div.css-1ebprri'
+      ];
+      const allFound = Array.from(document.querySelectorAll<HTMLElement>(selectors.join(', ')));
+      return allFound.filter((b) => {
+        return b.querySelector('input[data-automation-id*="jobTitle"], input[id*="jobTitle"], input[aria-label*="Job Title"]') !== null;
+      });
+    };
 
+    const workBlocks = getWorkBlocks();
+    if (workBlocks.length <= targetCount) return;
+
+    // Delete extra blank work experience blocks beyond target count
+    for (let i = workBlocks.length - 1; i >= targetCount; i--) {
+      const block = workBlocks[i];
+      if (!block) continue;
+
+      // Only delete if the block is empty (jobTitle is blank)
+      const jobInput = block.querySelector<HTMLInputElement>('input[data-automation-id*="jobTitle"], input[id*="jobTitle"], input[aria-label*="Job Title"]');
+      if (jobInput && jobInput.value.trim() !== '') {
+        continue;
+      }
+
+      const deleteBtn = block.querySelector<HTMLElement>('button.css-zfgw5f') ||
+        Array.from(block.querySelectorAll<HTMLElement>('button')).find((b) => {
+          const txt = (b.textContent || '').toLowerCase().trim();
+          return txt === 'delete' || b.querySelector('.wd-icon-trash') !== null || b.getAttribute('data-automation-id')?.includes('delete');
+        });
+
+      if (deleteBtn) {
+        console.log(`[Workday AI] Deleting extra blank Work Experience block ${i + 1} (> ${targetCount})...`);
+        this.clickWorkdayOptionElement(deleteBtn);
+        await new Promise((r) => setTimeout(r, 600));
+
+        const confirmBtn = Array.from(document.querySelectorAll<HTMLElement>('button')).find((b) => {
+          const txt = (b.textContent || '').toLowerCase().trim();
+          const auto = (b.getAttribute('data-automation-id') || '').toLowerCase();
+          return !b.isSameNode(deleteBtn) && (txt === 'delete' || txt === 'confirm' || auto.includes('confirm'));
+        });
+
+        if (confirmBtn) {
+          this.clickWorkdayOptionElement(confirmBtn);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+    }
+  }
 
   public static async fillWorkdaySkills(skills: string[]): Promise<number> {
     if (!skills || skills.length === 0) return 0;
@@ -944,70 +1084,214 @@ export class DOMFiller {
     return filled;
   }
 
-  public static async fillWorkdayWebsites(candidate: CandidateProfile): Promise<number> {
-    const links: string[] = [];
+  public static async fillWorkdayLinkedIn(candidate: CandidateProfile): Promise<boolean> {
+    let linkedInUrl = candidate.personalInfo?.linkedin || '';
 
-    if (candidate.personalInfo?.linkedin) links.push(candidate.personalInfo.linkedin);
-    if (candidate.personalInfo?.github && !links.includes(candidate.personalInfo.github)) links.push(candidate.personalInfo.github);
-    if (candidate.personalInfo?.website && !links.includes(candidate.personalInfo.website)) links.push(candidate.personalInfo.website);
-
-    if (candidate.projects) {
-      for (const p of candidate.projects) {
-        if (p.url && !links.includes(p.url)) links.push(p.url);
-      }
+    // Fallback search in hyperlinks or projects if missing
+    if (!linkedInUrl && candidate.hyperlinks) {
+      const found = candidate.hyperlinks.find((h) => h && h.toLowerCase().includes('linkedin.com'));
+      if (found) linkedInUrl = found;
+    }
+    if (!linkedInUrl && candidate.projects) {
+      const found = candidate.projects.find((p) => p.url && p.url.toLowerCase().includes('linkedin.com'));
+      if (found?.url) linkedInUrl = found.url;
     }
 
-    if (candidate.hyperlinks) {
-      for (const h of candidate.hyperlinks) {
-        if (h && !links.includes(h) && (h.startsWith('http') || h.startsWith('www.'))) {
-          links.push(h);
+    if (!linkedInUrl) return false;
+
+    // 1. Direct ID / Attribute selectors
+    const linkedInInput = document.querySelector<HTMLInputElement>(
+      '#socialNetworkAccounts--linkedInAccount, input[id*="socialNetworkAccounts--linkedInAccount"], input[id*="linkedInAccount"], input[name="linkedInAccount"], input[data-automation-id*="linkedInAccount"], [data-automation-id="formField-linkedInAccount"] input, [data-fkit-id*="linkedInAccount"] input, [data-automation-id*="socialNetwork"] input, input[id*="socialNetwork"]'
+    ) || Array.from(document.querySelectorAll<HTMLInputElement>('input[type="text"], input:not([type])')).find((inp) => {
+      const id = (inp.id || '').toLowerCase();
+      const name = (inp.name || '').toLowerCase();
+      const aria = (inp.getAttribute('aria-label') || '').toLowerCase();
+      const placeholder = (inp.getAttribute('placeholder') || '').toLowerCase();
+      const auto = (inp.getAttribute('data-automation-id') || '').toLowerCase();
+      const parentTxt = (inp.closest('[data-automation-id*="formField"], div.css-7t35fz, div')?.textContent || '').toLowerCase();
+
+      return (
+        id.includes('linkedin') ||
+        name.includes('linkedin') ||
+        auto.includes('linkedin') ||
+        aria.includes('linkedin') ||
+        placeholder.includes('linkedin') ||
+        (parentTxt.includes('linkedin') && !parentTxt.includes('websites')) ||
+        (id.includes('socialnetwork') && id.includes('linkedin'))
+      );
+    });
+
+    if (linkedInInput) {
+      const curVal = (linkedInInput.value || '').trim();
+      if (!curVal) {
+        console.log(`[Workday AI] Filling Social Network LinkedIn Account -> "${linkedInUrl}"`);
+        const ok = this.setInputValue(linkedInInput, linkedInUrl);
+        return ok;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  public static async fillWorkdayWebsites(candidate: CandidateProfile): Promise<number> {
+    const rawLinks: string[] = [];
+
+    const addUniqueLink = (url?: string) => {
+      if (!url) return;
+      let clean = url.trim();
+      if (!clean) return;
+      // Exclude LinkedIn - LinkedIn belongs to socialNetworkAccounts--linkedInAccount
+      if (clean.toLowerCase().includes('linkedin.com')) return;
+      clean = clean.replace(/\/+$/, '');
+      if (!rawLinks.some((l) => l.toLowerCase().replace(/\/+$/, '') === clean.toLowerCase())) {
+        rawLinks.push(url.trim());
+      }
+    };
+
+    // 1. Add Personal Website / Portfolio, GitHub, and unique Project URLs (NO LinkedIn)
+    if (candidate.personalInfo?.website) addUniqueLink(candidate.personalInfo.website);
+    if (candidate.personalInfo?.github) addUniqueLink(candidate.personalInfo.github);
+
+    if (candidate.projects && Array.isArray(candidate.projects)) {
+      for (const p of candidate.projects) {
+        if (p && p.url) {
+          addUniqueLink(p.url);
         }
       }
     }
 
-    if (links.length === 0) return 0;
+    if (candidate.hyperlinks && Array.isArray(candidate.hyperlinks)) {
+      for (const h of candidate.hyperlinks) {
+        if (h && (h.startsWith('http://') || h.startsWith('https://') || h.startsWith('www.'))) {
+          addUniqueLink(h);
+        }
+      }
+    }
+
+    // STRICT CAP: 2 to 3 websites maximum (3 is the absolute limit)
+    const links = rawLinks.slice(0, 3);
+    const targetLinkCount = Math.min(links.length, 3);
+
+    // Strict guard: verify Websites section container exists on current page
+    const websiteSection = document.querySelector<HTMLElement>(
+      '[role="group"][aria-labelledby*="Websites"], [role="group"][aria-labelledby*="website"], [data-automation-id*="website"], [data-automation-id*="websites"]'
+    ) || document.getElementById('Websites-section')?.closest('[role="group"], section, div') || null;
+
+    if (!websiteSection) {
+      console.log('[Workday AI] No Websites section found on page. Skipping website fill ✓');
+      return 0;
+    }
+
     let addedCount = 0;
+    console.log(`[Workday AI] Websites engine: Target count is ${targetLinkCount} (capped at max 3, no LinkedIn). Links:`, links);
 
-    const websiteAddBtn = this.findWorkdayAddButton('website');
-    const targetLinkCount = Math.min(links.length, 4);
-
-    let urlInputs = document.querySelectorAll<HTMLElement>(
-      'input[data-automation-id*="website"], input[data-automation-id*="url"], input[id*="website"], input[aria-label*="Website"], input[aria-label*="URL"]'
-    );
-
-    if (urlInputs.length === 0 && websiteAddBtn) {
-      this.clickWorkdayOptionElement(websiteAddBtn);
-      addedCount++;
-      await new Promise((r) => setTimeout(r, 550));
-    }
-
-    urlInputs = document.querySelectorAll<HTMLElement>(
-      'input[data-automation-id*="website"], input[data-automation-id*="url"], input[id*="website"], input[aria-label*="Website"], input[aria-label*="URL"]'
-    );
-
-    while (urlInputs.length < targetLinkCount && websiteAddBtn) {
-      this.clickWorkdayOptionElement(websiteAddBtn);
-      addedCount++;
-      await new Promise((r) => setTimeout(r, 550));
-
-      const updatedInputs = document.querySelectorAll<HTMLElement>(
-        'input[data-automation-id*="website"], input[data-automation-id*="url"], input[id*="website"], input[aria-label*="Website"], input[aria-label*="URL"]'
+    const getWebsitePanels = (): HTMLElement[] => {
+      const allGroups = Array.from(
+        websiteSection.querySelectorAll<HTMLElement>(
+          '[role="group"][aria-labelledby*="Websites-"], div.css-1ebprri'
+        )
       );
-      if (updatedInputs.length === urlInputs.length) break;
-      urlInputs = updatedInputs;
+      return allGroups.filter((g) => g.querySelector('input[data-automation-id*="url"], input[id*="webAddress"], input[name="url"], input[id*="url"]') !== null);
+    };
+
+    const getUrlInputs = (): HTMLInputElement[] => {
+      return Array.from(
+        websiteSection.querySelectorAll<HTMLInputElement>(
+          'input[data-automation-id*="url"], input[id*="webAddress"], input[name="url"], input[id*="url"]'
+        )
+      );
+    };
+
+    let panels = getWebsitePanels();
+    let urlInputs = getUrlInputs();
+
+    // 2. If page has MORE than targetLinkCount (e.g. 5 on page when target is 3), delete extra panels to eliminate duplicate errors
+    if (panels.length > targetLinkCount) {
+      console.log(`[Workday AI] Found ${panels.length} website forms on page, target is ${targetLinkCount}. Deleting extra forms...`);
+      for (let i = panels.length - 1; i >= targetLinkCount; i--) {
+        const panel = panels[i];
+        if (!panel) continue;
+
+        const delBtn = panel.querySelector<HTMLElement>('button.css-zfgw5f') ||
+          Array.from(panel.querySelectorAll<HTMLElement>('button')).find((b) => {
+            const txt = (b.textContent || '').toLowerCase().trim();
+            return txt === 'delete' || b.querySelector('.wd-icon-trash') !== null || b.getAttribute('data-automation-id')?.includes('delete');
+          });
+
+        if (delBtn) {
+          console.log(`[Workday AI] Deleting extra Website form ${i + 1}...`);
+          this.clickWorkdayOptionElement(delBtn);
+          await new Promise((r) => setTimeout(r, 500));
+
+          const confirmBtn = Array.from(document.querySelectorAll<HTMLElement>('button')).find((b) => {
+            const txt = (b.textContent || '').toLowerCase().trim();
+            const auto = (b.getAttribute('data-automation-id') || '').toLowerCase();
+            return !b.isSameNode(delBtn) && (txt === 'delete' || txt === 'confirm' || auto.includes('confirm'));
+          });
+          if (confirmBtn) {
+            this.clickWorkdayOptionElement(confirmBtn);
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        }
+      }
+      panels = getWebsitePanels();
+      urlInputs = getUrlInputs();
     }
 
-    const allUrlInputs = Array.from(document.querySelectorAll<HTMLElement>(
-      'input[data-automation-id*="website"], input[data-automation-id*="url"], input[id*="website"], input[aria-label*="Website"], input[aria-label*="URL"]'
-    ));
+    const findWebAddBtn = (): HTMLElement | null => {
+      return websiteSection.querySelector<HTMLElement>(
+        'button[data-automation-id="add-button"], button.css-f176sn, button[data-automation-id*="add"]'
+      ) || Array.from(websiteSection.querySelectorAll<HTMLElement>('button')).find((b) => {
+        const txt = (b.textContent || '').toLowerCase().trim();
+        return (txt === 'add' || txt === 'add another' || txt.includes('add')) && !txt.includes('delete');
+      }) || null;
+    };
 
-    for (let i = 0; i < Math.min(allUrlInputs.length, targetLinkCount); i++) {
+    // 3. Add entries ONLY until reaching targetLinkCount (max 3)
+    while (urlInputs.length < targetLinkCount) {
+      const websiteAddBtn = findWebAddBtn();
+      if (!websiteAddBtn) {
+        console.log(`[Workday AI] No Add Another button found in Websites section. Total forms: ${urlInputs.length}`);
+        break;
+      }
+
+      const beforeCount = urlInputs.length;
+      console.log(`[Workday AI] Adding Website form ${beforeCount + 1}/${targetLinkCount}...`);
+      this.clickWorkdayOptionElement(websiteAddBtn);
+
+      let added = false;
+      for (let attempt = 0; attempt < 15; attempt++) {
+        await new Promise((r) => setTimeout(r, 300));
+        urlInputs = getUrlInputs();
+        if (urlInputs.length > beforeCount) {
+          added = true;
+          addedCount++;
+          break;
+        }
+      }
+
+      if (!added) {
+        console.log('[Workday AI] Add did not produce new Website form. Stopping add loop.');
+        break;
+      }
+    }
+
+    // Refresh final inputs
+    urlInputs = getUrlInputs();
+    const fillLimit = Math.min(urlInputs.length, targetLinkCount);
+
+    console.log(`[Workday AI] Filling ${fillLimit} unique Website URL(s)...`);
+
+    // 4. Fill each input with the corresponding unique non-LinkedIn link
+    for (let i = 0; i < fillLimit; i++) {
       if (links[i]) {
-        this.setInputValue(allUrlInputs[i], links[i]);
+        const inputEl = urlInputs[i];
+        this.setInputValue(inputEl, links[i]);
         await new Promise((r) => setTimeout(r, 200));
       }
     }
 
+    console.log('[Workday AI] Websites complete ✓ Exactly', fillLimit, 'unique URLs filled.');
     return addedCount;
   }
 
@@ -1017,7 +1301,7 @@ export class DOMFiller {
     const workExpList = candidate.workExperience || [];
 
     if (workExpList.length > 0) {
-      // EXACT JSON COUNT. Do not cap it to 5.
+      // EXACT JSON COUNT. Fill and add exactly the number of entries in the candidate's JSON profile.
       const targetWorkCount = workExpList.length;
 
       const getWorkEntries = (): HTMLElement[] => {
@@ -1088,25 +1372,6 @@ export class DOMFiller {
         `[Workday AI] FINAL Work Experience forms available: ${workEntries.length}`
       );
 
-      // ---------------------------------------------------------
-      // WORK EXPERIENCE IS NOW LOCKED
-      // JSON count has been created and all JSON data is filled.
-      // From this point onward:
-      // - DO NOT ADD
-      // - DO NOT DELETE
-      // - DO NOT EDIT
-      // - DO NOT REFILL
-      // - DO NOT CHANGE DATES
-      // ---------------------------------------------------------
-
-      const workExperienceLocked = true;
-
-      console.log(
-        `[Workday AI] 🔒 WORK EXPERIENCE LOCKED. ` +
-        `JSON=${workExpList.length}, ` +
-        `PAGE=${getWorkEntries().length}. ` +
-        `No further Work Experience changes allowed.`
-      );
       const allJobTitles = Array.from(
         document.querySelectorAll<HTMLElement>(
           'input[data-automation-id*="jobTitle"], input[id*="jobTitle"], input[aria-label*="Job Title"]'
@@ -1137,9 +1402,7 @@ export class DOMFiller {
         )
       );
 
-      // IMPORTANT:
-      // Fill ONLY the number of experiences contained in JSON.
-      // Never touch anything after that.
+      // Fill EXACTLY the number of experiences contained in JSON.
       const fillLimit = Math.min(
         workExpList.length,
         allJobTitles.length
@@ -1147,27 +1410,14 @@ export class DOMFiller {
 
       for (let i = 0; i < fillLimit; i++) {
         const exp = workExpList[i];
-
         if (!exp) continue;
 
         const jobInput = allJobTitles[i];
-
         if (!jobInput) continue;
 
         console.log(
           `[Workday AI] Filling Work Experience ${i + 1}/${workExpList.length}`
         );
-
-        // -------------------------------------------------------
-        // PROTECTION:
-        // If this experience already has a Job Title, DO NOT EDIT IT.
-        // -------------------------------------------------------
-        if ((jobInput as HTMLInputElement).value?.trim()) {
-          console.log(
-            `[Workday AI] Work Experience ${i + 1} already has data. SKIPPING entire entry.`
-          );
-          continue;
-        }
 
         // Find the exact entry container.
         const entryContainer =
@@ -1177,10 +1427,6 @@ export class DOMFiller {
           jobInput.parentElement?.parentElement?.parentElement?.parentElement?.parentElement;
 
         if (!entryContainer) continue;
-
-        // -------------------------------------------------------
-        // From this point, fill ONLY THIS JSON experience.
-        // -------------------------------------------------------
 
         const companyInput =
           entryContainer.querySelector<HTMLElement>(
@@ -1233,14 +1479,7 @@ export class DOMFiller {
           await new Promise((r) => setTimeout(r, 200));
         }
 
-        // -------------------------------------------------------
         // DATES
-        // Only write a date if the corresponding date container
-        // is EMPTY.
-        //
-        // Once written, it will NEVER be touched again in this run.
-        // -------------------------------------------------------
-
         const startDateContainer =
           entryContainer.querySelector<HTMLElement>(
             '[data-automation-id="formField-startDate"], [data-automation-id*="startDate"], [data-automation-id="dateInputWrapper"]'
@@ -1255,7 +1494,8 @@ export class DOMFiller {
           Boolean(
             (exp as any).currentlyWorking ??
             (exp as any).currentlyWork ??
-            (exp as any).current
+            (exp as any).current ??
+            exp.isCurrent
           );
 
         const startDate =
@@ -1278,7 +1518,6 @@ export class DOMFiller {
             startDate,
             '01'
           );
-
           await new Promise((r) => setTimeout(r, 300));
         }
 
@@ -1293,14 +1532,10 @@ export class DOMFiller {
             endDate,
             '12'
           );
-
           await new Promise((r) => setTimeout(r, 300));
         }
 
-        // -------------------------------------------------------
         // CURRENTLY WORKING
-        // -------------------------------------------------------
-
         const currentBox =
           entryContainer.querySelector<HTMLInputElement>(
             'input[type="checkbox"][data-automation-id*="currentlyWork"], input[type="checkbox"][id*="currentlyWork"]'
@@ -1316,13 +1551,7 @@ export class DOMFiller {
         );
       }
 
-      // ---------------------------------------------------------
-      // VERY IMPORTANT:
-      // After this point, DO NOT ADD.
-      // DO NOT DELETE.
-      // DO NOT RE-FILL.
-      // DO NOT EDIT EXPERIENCE DATA.
-      // ---------------------------------------------------------
+      await this.resolveDateAlerts();
 
       console.log(
         `[Workday AI] WORK EXPERIENCE COMPLETE. ` +
@@ -1331,6 +1560,7 @@ export class DOMFiller {
         `No more Work Experience modifications will be performed.`
       );
     }
+
     // --- 2. EDUCATION MULTI-ENTRY ENGINE ---
     console.log('[Workday AI Debug] Full Candidate Education JSON Profile:', JSON.stringify(candidate.education, null, 2));
 
@@ -1351,8 +1581,6 @@ export class DOMFiller {
 
     const targetEduCount = Math.min(eduList.length, 2);
 
-
-
     if (targetEduCount > 0) {
       // Helper to count total Education entries currently present on page
       const countCurrentEduEntries = (): number => {
@@ -1368,7 +1596,22 @@ export class DOMFiller {
       let currentEduCount = countCurrentEduEntries();
       console.log(`[Workday AI] Current Education entries on page: ${currentEduCount}, Target count from JSON: ${targetEduCount}`);
 
-      // ONLY add new blocks IF currentEduCount < targetEduCount
+      // Add new blocks if currentEduCount < targetEduCount
+      while (currentEduCount < targetEduCount) {
+        const addBtn = this.findEducationAddButton();
+        if (!addBtn) break;
+
+        const beforeCount = currentEduCount;
+        this.clickWorkdayOptionElement(addBtn);
+
+        for (let attempt = 0; attempt < 15; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          currentEduCount = countCurrentEduEntries();
+          if (currentEduCount > beforeCount) break;
+        }
+
+        if (currentEduCount <= beforeCount) break;
+      }
 
       const allSchools = Array.from(document.querySelectorAll<HTMLElement>(
         'input[data-automation-id*="school"], input[data-automation-id*="institution"], input[id*="school"], input[aria-label*="School"]'
@@ -1485,7 +1728,11 @@ export class DOMFiller {
       addedCount += skillsAdded;
     }
 
-    // --- 4. WEBSITES MULTI-ENTRY ENGINE (Portfolio, GitHub, LinkedIn, Project Links) ---
+    // --- 4. SOCIAL NETWORK ACCOUNTS (LinkedIn) ---
+    const linkedInAdded = await this.fillWorkdayLinkedIn(candidate);
+    if (linkedInAdded) addedCount++;
+
+    // --- 5. WEBSITES MULTI-ENTRY ENGINE (Portfolio, GitHub, Project Links) ---
     const websitesAdded = await this.fillWorkdayWebsites(candidate);
     addedCount += websitesAdded;
     return addedCount;
@@ -1854,13 +2101,15 @@ export class DOMFiller {
   public static async fillWorkdaySelfIdentify(candidate: CandidateProfile): Promise<number> {
     let filled = 0;
 
-    // Strict guard: verify we are actually inside the Self-Identify / Disability form section
-    const disabilitySection = document.querySelector<HTMLElement>(
-      '[data-automation-id*="selfIdentifiedDisability"], [id*="selfIdentifiedDisability"], div[data-fkit-id*="disability"], div[id*="disability"]'
-    ) || Array.from(document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, legend, div')).find((el) => {
-      const txt = (el.textContent || '').toLowerCase();
+    // Strict guard: verify we are actually on the Self-Identify / Disability CC-305 form step
+    const disabilityHeading = Array.from(document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, legend')).find((el) => {
+      const txt = (el.textContent || '').toLowerCase().trim();
       return (txt.includes('voluntary self-identification of disability') || txt.includes('form cc-305') || txt.includes('self-identification of disability')) && !txt.includes('experience');
-    }) || null;
+    });
+
+    const disabilitySection = document.querySelector<HTMLElement>(
+      '#selfIdentifiedDisabilityData, [data-automation-id="selfIdentifiedDisability"], div[data-fkit-id*="selfIdentifiedDisability"], [data-automation-id="self-identification-of-disability"]'
+    ) || (disabilityHeading ? (disabilityHeading.closest('[role="group"], [data-automation-id*="selfIdentifiedDisability"], fieldset, section') || disabilityHeading.parentElement) : null);
 
     if (!disabilitySection) {
       console.log('[Workday AI] Not on Self-Identify step -> DO NOT TOUCH ANY DATE INPUTS ON PAGE ✓');
@@ -1871,7 +2120,7 @@ export class DOMFiller {
 
     // 1. Auto-fill Name field with candidate's full name (strictly scoped inside disability section)
     const nameInput = disabilitySection.querySelector<HTMLInputElement>(
-      '#selfIdentifiedDisabilityData--name, input[id*="disability"][id*="name"], [data-automation-id="formField-name"] input, input[data-automation-id*="name"]'
+      '#selfIdentifiedDisabilityData--name, input[id*="disability"][id*="name"], [data-automation-id="formField-name"] input'
     );
     if (nameInput) {
       const curVal = (nameInput.value || '').trim();
@@ -1890,9 +2139,15 @@ export class DOMFiller {
     const yyyy = String(today.getFullYear());
     const todayStr = `${mm}/${dd}/${yyyy}`;
 
-    const monthInp = disabilitySection.querySelector<HTMLInputElement>('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input, [data-automation-id="dateSectionMonth-input"]');
-    const dayInp = disabilitySection.querySelector<HTMLInputElement>('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-input, [data-automation-id="dateSectionDay-input"]');
-    const yearInp = disabilitySection.querySelector<HTMLInputElement>('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-input, [data-automation-id="dateSectionYear-input"]');
+    const monthInp = disabilitySection.querySelector<HTMLInputElement>(
+      '#selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input, [data-automation-id="formField-dateSignedOn"] [data-automation-id="dateSectionMonth-input"]'
+    );
+    const dayInp = disabilitySection.querySelector<HTMLInputElement>(
+      '#selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-input, [data-automation-id="formField-dateSignedOn"] [data-automation-id="dateSectionDay-input"]'
+    );
+    const yearInp = disabilitySection.querySelector<HTMLInputElement>(
+      '#selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-input, [data-automation-id="formField-dateSignedOn"] [data-automation-id="dateSectionYear-input"]'
+    );
 
     if (monthInp && dayInp && yearInp) {
       console.log(`[Workday AI] Direct Disability Date Spinbutton fill: ${mm}/${dd}/${yyyy}`);
@@ -1900,16 +2155,16 @@ export class DOMFiller {
       this.setInputValue(dayInp, dd);
       this.setInputValue(yearInp, yyyy);
 
-      const mDisplay = disabilitySection.querySelector('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-display, [data-automation-id="dateSectionMonth-display"]');
-      const dDisplay = disabilitySection.querySelector('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-display, [data-automation-id="dateSectionDay-display"]');
-      const yDisplay = disabilitySection.querySelector('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-display, [data-automation-id="dateSectionYear-display"]');
+      const mDisplay = disabilitySection.querySelector('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-display, [data-automation-id="formField-dateSignedOn"] [data-automation-id="dateSectionMonth-display"]');
+      const dDisplay = disabilitySection.querySelector('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-display, [data-automation-id="formField-dateSignedOn"] [data-automation-id="dateSectionDay-display"]');
+      const yDisplay = disabilitySection.querySelector('#selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-display, [data-automation-id="formField-dateSignedOn"] [data-automation-id="dateSectionYear-display"]');
       if (mDisplay) mDisplay.textContent = mm;
       if (dDisplay) dDisplay.textContent = dd;
       if (yDisplay) yDisplay.textContent = yyyy;
       filled++;
     } else {
       const dateContainer = disabilitySection.querySelector<HTMLElement>(
-        '[data-automation-id="formField-dateSection"], [data-automation-id*="dateInputWrapper"], [data-automation-id*="dateSection"]'
+        '#selfIdentifiedDisabilityData--dateSignedOn, [data-automation-id="formField-dateSignedOn"]'
       );
 
       if (dateContainer) {
@@ -2566,20 +2821,71 @@ export class DOMFiller {
     }
   }
 
-  public static solveAllDateErrors(): number {
-    let count = 0;
+  public static async resolveDateAlerts(): Promise<number> {
+    let resolved = 0;
     try {
-      const calendarIcons = Array.from(document.querySelectorAll<HTMLElement>(
-        '[data-automation-id*="date-picker-icon"], [data-automation-id*="calendarIcon"], button[aria-label*="Calendar"], svg[data-uxi-glyph-id="calendar"]'
-      ));
-      for (const icon of calendarIcons) {
-        try {
-          icon.click();
-          count++;
-        } catch { }
+      // Find all date error alert paragraphs on the page (e.g. #error1-workExperience-66--endDate)
+      const dateAlerts = Array.from(document.querySelectorAll<HTMLElement>(
+        'p[data-automation-id="inputAlert"], [id*="endDate"][data-automation-id*="Alert"], [id*="startDate"][data-automation-id*="Alert"], [id*="endDate"][class*="Alert"], [id*="startDate"][class*="Alert"]'
+      )).filter((p) => {
+        const txt = (p.textContent || '').toLowerCase();
+        const id = (p.id || '').toLowerCase();
+        return (
+          txt.includes('the field to is required') ||
+          txt.includes('the field from is required') ||
+          txt.includes('required and must have a value') ||
+          txt.includes('is required') ||
+          id.includes('enddate') ||
+          id.includes('startdate')
+        );
+      });
+
+      for (const alert of dateAlerts) {
+        // Locate surrounding container / formField
+        const container = alert.closest<HTMLElement>(
+          '[data-automation-id*="formField"], [data-automation-id*="dateInputWrapper"], div.css-0, fieldset, div.css-1ebprri, div.css-1iw5nyw'
+        ) || alert.parentElement?.parentElement || alert.parentElement;
+
+        if (!container) continue;
+
+        // Find calendar icon specifically inside this container (span.css-8qepr6, svg.wd-icon-calendar, button)
+        const calendarTarget = container.querySelector<HTMLElement>(
+          'span.css-8qepr6, svg.wd-icon-calendar, svg[class*="calendar"], button[aria-label*="Calendar"], [data-automation-id*="date-picker-icon"], [data-automation-id*="calendarIcon"]'
+        ) || alert.parentElement?.querySelector<HTMLElement>('span.css-8qepr6, svg.wd-icon-calendar');
+
+        if (calendarTarget) {
+          console.log('[Workday AI] Date alert detected ("The field To/From is required"). Clicking calendar icon and outside to dismiss error...');
+          const clickable = calendarTarget.closest('button') || calendarTarget;
+          this.clickWorkdayOptionElement(clickable);
+          await new Promise((r) => setTimeout(r, 200));
+
+          // Click outside to close calendar pop-up and clear error state
+          try {
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
+            const outsideTarget = document.querySelector<HTMLElement>(
+              '[data-automation-id="smartDivider"], [data-automation-id="pageHeader"], h3, h4, body'
+            );
+            if (outsideTarget) {
+              outsideTarget.click();
+            }
+            document.body.click();
+          } catch { }
+
+          await new Promise((r) => setTimeout(r, 300));
+          resolved++;
+        }
       }
-    } catch { }
-    return count;
+    } catch (e) {
+      console.warn('[Workday AI] resolveDateAlerts notice:', e);
+    }
+    return resolved;
+  }
+
+  public static solveAllDateErrors(): number {
+    this.resolveDateAlerts();
+    return 0;
   }
 
   public static async fillWorkdayCreateAccount(email?: string, password?: string): Promise<number> {
@@ -2633,8 +2939,15 @@ export class DOMFiller {
   }
 
   public static async autoSolveDOMErrors(candidate: CandidateProfile): Promise<number> {
-    console.log('[Workday AI] Checking top-of-page error banner...');
+    console.log('[Workday AI] Checking top-of-page error banner & date alerts...');
     let fixed = 0;
+
+    // 0. Auto-resolve date field alerts by clicking calendar icon and outside
+    const dateAlertsFixed = await this.resolveDateAlerts();
+    if (dateAlertsFixed > 0) {
+      console.log(`[Workday AI] Auto-resolved ${dateAlertsFixed} date field alerts ✓`);
+      fixed += dateAlertsFixed;
+    }
 
     // Detect Workday top error box / error heading
     const errorContainer = document.querySelector<HTMLElement>(
@@ -2643,8 +2956,12 @@ export class DOMFiller {
     const errorText = (errorContainer?.textContent || '').toLowerCase();
 
     if (!errorContainer || !errorText) {
-      console.log('[Workday AI] No top-of-page errors found.');
-      return 0;
+      if (fixed > 0) {
+        console.log('[Workday AI] Date alerts resolved without top error banner.');
+      } else {
+        console.log('[Workday AI] No top-of-page errors found.');
+      }
+      return fixed;
     }
 
     console.log(`[Workday AI] Top error detected: "${errorText.trim().slice(0, 100)}..."`);
@@ -2661,6 +2978,13 @@ export class DOMFiller {
       console.log('[Workday AI] Resolving missing How Did You Hear About Us error specifically...');
       const sourceFixed = await this.fillWorkdaySource();
       if (sourceFixed) fixed++;
+      await new Promise((r) => setTimeout(r, 600));
+    }
+
+    if (errorText.includes('field to is required') || errorText.includes('field from is required') || errorText.includes('enddate') || errorText.includes('startdate')) {
+      console.log('[Workday AI] Resolving Date alerts for error banner...');
+      const dFixed = await this.resolveDateAlerts();
+      if (dFixed) fixed += dFixed;
       await new Promise((r) => setTimeout(r, 600));
     }
 

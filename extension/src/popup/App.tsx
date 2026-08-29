@@ -474,7 +474,13 @@ export default function App() {
           if (!autoFillRunningRef.current) break;
 
           // 4. Fill form fields with full JSON candidate profile and await complete finish
-          setStatusMsg(`[${stepName}] Auto-filling all JSON details (Experience, Education, Skills, Disclosures)...`);
+          const isExperienceStep = stepName.toLowerCase().includes('experience') || stepName.toLowerCase().includes('work');
+          if (isExperienceStep) {
+            setStatusMsg(`[${stepName}] Deep filling Work Experience, Education, Skills, Websites (~35-40s)...`);
+          } else {
+            setStatusMsg(`[${stepName}] Auto-filling all JSON details...`);
+          }
+
           const fillRes: any = await new Promise((resolve) => {
             chrome.tabs.sendMessage(
               tabId,
@@ -484,10 +490,11 @@ export default function App() {
           });
 
           const filledCount = fillRes?.result?.filledCount || 0;
-          setStatusMsg(`[${stepName}] Filled ${filledCount} fields from JSON profile! Verifying... ✓`);
+          setStatusMsg(`[${stepName}] Filled ${filledCount} details from JSON profile! Verifying... ✓`);
 
-          // Allow DOM to settle and verify all fields have committed
-          await new Promise((r) => setTimeout(r, 2000));
+          // If on My Experience, allow a generous 5s buffer to ensure all skills & entries are settled
+          const settleTime = isExperienceStep ? 5000 : 2000;
+          await new Promise((r) => setTimeout(r, settleTime));
 
           if (!autoFillRunningRef.current) break;
 
@@ -501,7 +508,7 @@ export default function App() {
             );
           });
 
-          await new Promise((r) => setTimeout(r, 1000));
+          await new Promise((r) => setTimeout(r, 1200));
 
           if (!autoFillRunningRef.current) break;
 
@@ -511,9 +518,9 @@ export default function App() {
             chrome.tabs.sendMessage(tabId, { type: 'SUBMIT_STEP' }, () => resolve(true));
           });
 
-          // Wait 3.5s for Workday to complete page transition and render the new tab
-          setStatusMsg('Loading next step from Workday...');
-          await new Promise((r) => setTimeout(r, 3500));
+          // Wait for Workday to complete page transition and render the new tab
+          setStatusMsg('Waiting for next step to load...');
+          await new Promise((r) => setTimeout(r, 4000));
 
           if (!autoFillRunningRef.current) break;
 

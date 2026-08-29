@@ -981,26 +981,33 @@ export class DOMFiller {
     let filled = 0;
 
     const findSkillsInput = (): HTMLInputElement | null => {
-      return document.querySelector<HTMLInputElement>(
-        'input[placeholder*="Type to Add Skills"], input[placeholder*="Add Skills"], input[data-automation-id*="skills"], input[aria-label*="Skills"], [data-automation-id*="skillsPrompt"] input, [data-automation-id*="skills"] input'
-      ) || Array.from(document.querySelectorAll<HTMLInputElement>('input')).find((inp) => {
-        const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
-        const aria = (inp.getAttribute('aria-label') || '').toLowerCase();
-        const auto = (inp.getAttribute('data-automation-id') || '').toLowerCase();
-        return ph.includes('skills') || aria.includes('skills') || auto.includes('skills');
-      }) || null;
+      return (
+        document.querySelector<HTMLInputElement>('#skills--skills') ||
+        document.querySelector<HTMLInputElement>(
+          'input[data-uxi-multiselect-id*="skill"], [data-automation-id="multiSelectContainer"] input, input[placeholder*="Type to Add Skills"], input[placeholder*="Add Skills"], input[data-automation-id*="skills"], input[aria-label*="Skills"], [data-automation-id*="skillsPrompt"] input, [data-automation-id*="skills"] input'
+        ) ||
+        Array.from(document.querySelectorAll<HTMLInputElement>('input')).find((inp) => {
+          const id = (inp.id || '').toLowerCase();
+          const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+          const aria = (inp.getAttribute('aria-label') || '').toLowerCase();
+          const auto = (inp.getAttribute('data-automation-id') || '').toLowerCase();
+          return id.includes('skills') || ph.includes('skills') || aria.includes('skills') || auto.includes('skills');
+        }) ||
+        null
+      );
     };
 
     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
 
-    const skillsToFill = skills.slice(0, 10);
-    for (const skill of skillsToFill) {
+    // Process all candidate skills
+    for (let sIdx = 0; sIdx < skills.length; sIdx++) {
+      const skill = skills[sIdx];
       try {
         const skillLower = skill.toLowerCase().trim();
 
         // 1. Check if skill pill is ALREADY selected on page
         const existingPills = Array.from(document.querySelectorAll<HTMLElement>(
-          '[data-automation-id*="selectedItem"], [data-uxi-widget-type*="pill"], div.css-169z3b8, span.css-11v5kgg, [data-automation-id="multiSelectContainer"] span'
+          '[data-automation-id*="selectedItem"], [data-uxi-widget-type*="pill"], div.css-169z3b8, span.css-11v5kgg, [data-automation-id="multiSelectContainer"] span, [data-automation-id="multiSelectContainer"] div'
         ));
         const isAlreadySelected = existingPills.some((p) => {
           const txt = (p.textContent || '').toLowerCase().trim();
@@ -1008,29 +1015,31 @@ export class DOMFiller {
         });
 
         if (isAlreadySelected) {
-          console.log(`[Workday AI] Skill "${skill}" is ALREADY selected on page, skipping ✓`);
+          console.log(`[Workday AI] Skill "${skill}" is ALREADY added on page, skipping ✓`);
           filled++;
           continue;
         }
 
         const currentInput = findSkillsInput();
-        if (!currentInput) continue;
+        if (!currentInput) {
+          console.log('[Workday AI] Skills input not found on page.');
+          break;
+        }
 
-        console.log(`[Workday AI] Typing skill to insert: "${skill}"`);
+        console.log(`[Workday AI] [Skill ${sIdx + 1}/${skills.length}] Typing skill: "${skill}"`);
 
-        // 2. Clear input first
+        // 2. Focus & clear input
+        currentInput.focus();
+        currentInput.click();
+        await new Promise((r) => setTimeout(r, 150));
+
         const tracker = (currentInput as any)._reactValueTracker;
         if (tracker) tracker.setValue('');
         if (nativeSetter) nativeSetter.call(currentInput, '');
         else currentInput.value = '';
         currentInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-        // 3. Focus & click input
-        currentInput.focus();
-        currentInput.click();
-        await new Promise((r) => setTimeout(r, 200));
-
-        // 4. Type skill text into input
+        // 3. Set skill value into input
         if (tracker) tracker.setValue('');
         if (nativeSetter) nativeSetter.call(currentInput, skill);
         else currentInput.value = skill;
@@ -1039,39 +1048,51 @@ export class DOMFiller {
         currentInput.dispatchEvent(new Event('input', { bubbles: true }));
         currentInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-        // Wait 600ms for Workday popup options overlay to render in DOM
-        await new Promise((r) => setTimeout(r, 600));
+        // 4. Press the ENTER KEY to trigger Workday search
+        console.log(`[Workday AI] Pressing ENTER key for "${skill}" and waiting 3-5 seconds for dropdown to load...`);
+        currentInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        currentInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        currentInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
 
-        // 5. Read open popup options in DOM
-        const popupOptions = Array.from(document.querySelectorAll<HTMLElement>(
-          '[data-automation-id="promptOption"], [role="option"], li[role="option"], p[data-automation-label], ul[role="listbox"] li, div[role="option"], div[data-automation-id*="promptOption"], div.css-15rz5ap [role="listbox"] div'
-        ));
-
+        // 5. Wait 3-5 seconds and poll for dropdown options to appear in DOM
         let matchOpt: HTMLElement | null = null;
-        if (popupOptions.length > 0) {
-          matchOpt = popupOptions.find((opt) => {
-            const txt = (opt.textContent || opt.getAttribute('data-automation-label') || '').toLowerCase().trim();
-            return txt === skillLower || txt.includes(skillLower) || skillLower.includes(txt);
-          }) || popupOptions[0];
+        for (let attempt = 0; attempt < 12; attempt++) {
+          await new Promise((r) => setTimeout(r, 350));
+
+          const popupOptions = Array.from(document.querySelectorAll<HTMLElement>(
+            '[data-automation-id="promptOption"], [role="option"], li[role="option"], p[data-automation-label], ul[role="listbox"] li, div[role="option"], div[data-automation-id*="promptOption"], [data-uxi-widget-type="selectoption"], div.css-15rz5ap [role="listbox"] div, div[data-automation-id="multiSelectContainer"] ~ div [role="option"]'
+          ));
+
+          if (popupOptions.length > 0) {
+            matchOpt = popupOptions.find((opt) => {
+              const txt = (opt.textContent || opt.getAttribute('data-automation-label') || '').toLowerCase().trim();
+              return txt === skillLower || txt.includes(skillLower) || skillLower.includes(txt);
+            }) || popupOptions[0];
+
+            if (matchOpt) break;
+          }
         }
 
+        // 6. Select the option from dropdown
         if (matchOpt) {
-          console.log(`[Workday AI] Clicking dropdown option for "${skill}" to insert pill...`);
+          console.log(`[Workday AI] Found dropdown option for "${skill}". Clicking to add pill...`);
           const checkbox = matchOpt.querySelector<HTMLInputElement>('input[type="checkbox"]');
           const targetClickable = checkbox || matchOpt.querySelector<HTMLElement>('label') || matchOpt;
           this.clickWorkdayOptionElement(targetClickable);
-          await new Promise((r) => setTimeout(r, 400));
+          await new Promise((r) => setTimeout(r, 600));
           filled++;
         } else {
-          console.log(`[Workday AI] Committing custom skill tag "${skill}" via Enter key...`);
+          console.log(`[Workday AI] No dropdown list returned. Pressing ENTER again to commit tag "${skill}"...`);
           currentInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
           currentInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-          await new Promise((r) => setTimeout(r, 400));
+          await new Promise((r) => setTimeout(r, 500));
           filled++;
         }
+
+        // Small pause before processing the next skill
+        await new Promise((r) => setTimeout(r, 300));
       } catch (err) {
         console.warn(`[Workday AI] Error adding skill "${skill}":`, err);
-        // Close dropdown and continue to next skill
         try { document.body.click(); } catch { }
         await new Promise((r) => setTimeout(r, 300));
       }
@@ -1080,7 +1101,7 @@ export class DOMFiller {
     // Final cleanup: close any lingering dropdown
     try { document.body.click(); } catch { }
 
-    console.log(`[Workday AI] Skills complete: ${filled}/${skillsToFill.length} added`);
+    console.log(`[Workday AI] All skills complete: ${filled}/${skills.length} processed ✓`);
     return filled;
   }
 

@@ -228,71 +228,7 @@ export class DOMFiller {
       }
     } catch { }
 
-    // Continuous loop for auto-saving until all errors are cleared and next page is reached
-    await new Promise((r) => setTimeout(r, 600));
-    try {
-      console.log('[Workday AI] Starting Auto-Save & Next Page navigation loop...');
-      const initialStep = document.querySelector<HTMLElement>('[data-automation-id="activeStep"], [aria-current="step"], h2, h3')?.textContent?.trim() || '';
-
-      for (let attempt = 1; attempt <= 6; attempt++) {
-        console.log(`[Workday AI] Auto-Save attempt #${attempt}...`);
-        
-        // 1. Check for any top error banner first
-        const errorContainer = document.querySelector<HTMLElement>(
-          '[data-automation-id="errorHeading"], [data-automation-id="error-banner"], .css-chz2yv, .css-1lxwves, [data-automation-id="errorMessage"]'
-        );
-        if (errorContainer && (errorContainer.textContent || '').trim().length > 0) {
-          console.log(`[Workday AI] Found error banner on attempt #${attempt}. Resolving specific errors...`);
-          if (candidate) {
-            await this.autoSolveDOMErrors(candidate);
-          }
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-
-        // 2. Locate and click Save and Continue / Next button
-        const nextBtn = document.querySelector<HTMLElement>(
-          '[data-automation-id="bottom-navigation-next-button"], [data-automation-id="next"], [data-automation-id*="pageFooterNextButton"], [data-automation-id*="click-save-and-continue"], button[aria-label*="Save and Continue"], button[aria-label*="Save & Continue"], button[aria-label*="Continue"], button[aria-label*="Next"]'
-        ) || Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]')).find((b) => {
-          const t = (b.textContent || '').toLowerCase().trim();
-          return t.includes('save and continue') || t.includes('save & continue') || t === 'continue' || t === 'next';
-        }) || null;
-
-        if (!nextBtn) {
-          console.log('[Workday AI] Save and Continue button no longer on page. Navigation complete! ✓');
-          break;
-        }
-
-        nextBtn.focus();
-        nextBtn.click();
-        nextBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        nextBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-
-        // 3. Wait to observe if page navigated or if an error popped up
-        await new Promise((r) => setTimeout(r, 1800));
-
-        // Check if page navigated
-        const currentStep = document.querySelector<HTMLElement>('[data-automation-id="activeStep"], [aria-current="step"], h2, h3')?.textContent?.trim() || '';
-        const hasNextButtonStill = !!document.querySelector<HTMLElement>('[data-automation-id="bottom-navigation-next-button"], [data-automation-id="next"], [data-automation-id*="click-save-and-continue"]');
-        
-        const errorsNow = document.querySelector<HTMLElement>(
-          '[data-automation-id="errorHeading"], [data-automation-id="error-banner"], .css-chz2yv, .css-1lxwves'
-        );
-
-        if (!errorsNow && (currentStep !== initialStep || !hasNextButtonStill)) {
-          console.log('[Workday AI] Successfully transitioned to next page without errors! ✓');
-          break;
-        }
-
-        if (errorsNow && candidate) {
-          console.log('[Workday AI] Error detected after click. Auto-resolving...');
-          await this.autoSolveDOMErrors(candidate);
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-      }
-    } catch (e) {
-      console.warn('[Workday AI] Auto Save & Continue navigation loop notice:', e);
-    }
-
+    // End of executeInstructions pass
     return { filledCount, errorsCount };
   }
 
@@ -3139,25 +3075,6 @@ export class DOMFiller {
       const dFixed = await this.resolveDateAlerts();
       if (dFixed) fixed += dFixed;
       await new Promise((r) => setTimeout(r, 600));
-    }
-
-    // Try auto-clicking Save and Continue / Next after resolving the specific error
-    if (fixed > 0) {
-      console.log('[Workday AI] Specific error fixed! Triggering Save & Continue button...');
-      await new Promise((r) => setTimeout(r, 800));
-      const nextBtn = document.querySelector<HTMLElement>(
-        '[data-automation-id="bottom-navigation-next-button"], [data-automation-id="next"], [data-automation-id*="pageFooterNextButton"], [data-automation-id*="click-save-and-continue"], button[aria-label*="Save and Continue"], button[aria-label*="Save & Continue"], button[aria-label*="Continue"], button[aria-label*="Next"]'
-      ) || Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]')).find((b) => {
-        const t = (b.textContent || '').toLowerCase().trim();
-        return t.includes('save and continue') || t.includes('save & continue') || t === 'continue' || t === 'next';
-      }) || null;
-
-      if (nextBtn) {
-        nextBtn.focus();
-        nextBtn.click();
-        nextBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        nextBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-      }
     }
 
     return fixed;

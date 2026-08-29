@@ -502,9 +502,16 @@ export default function App() {
           const filledCount = fillRes?.result?.filledCount || 0;
           setStatusMsg(`[${stepName}] Filled ${filledCount} details from JSON profile! Verifying... ✓`);
 
-          // If on My Experience, allow a generous 8s verification buffer to ensure all skills & entries are settled
-          const settleTime = isExperienceStep ? 8000 : 2000;
-          await new Promise((r) => setTimeout(r, settleTime));
+          // If on My Experience, allow a generous 15-20s verification buffer to ensure all skills & entries are settled
+          if (isExperienceStep) {
+            for (let sec = 15; sec > 0; sec -= 5) {
+              if (!autoFillRunningRef.current) break;
+              setStatusMsg(`[${stepName}] Verifying Experience & Skills... (continuing in ${sec}s)`);
+              await new Promise((r) => setTimeout(r, 5000));
+            }
+          } else {
+            await new Promise((r) => setTimeout(r, 2000));
+          }
 
           if (!autoFillRunningRef.current) break;
 

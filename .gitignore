@@ -1,0 +1,101 @@
+# ============================
+# Dependencies
+# ============================
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# ============================
+# Next.js
+# ============================
+.next/
+out/
+build/
+
+# ============================
+# Production Build
+# ============================
+dist/
+*.tsbuildinfo
+
+# ============================
+# Environment Variables
+# ============================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Keep example env files
+!.env.example
+
+# ============================
+# Prisma
+# ============================
+prisma/migrations/dev.db
+prisma/*.db
+prisma/*.db-journal
+
+# ============================
+# Browser Extension Build
+# ============================
+extension/dist/
+extension/build/
+extension/*.crx
+extension/*.pem
+extension/*.zip
+
+# ============================
+# TypeScript
+# ============================
+*.js.map
+*.d.ts.map
+
+# ============================
+# Logs
+# ============================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ============================
+# OS / Editor Files
+# ============================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# ============================
+# Testing & Coverage
+# ============================
+coverage/
+.nyc_output/
+
+# ============================
+# Misc
+# ============================
+.cache/
+.parcel-cache/
+.turbo/
+*.pem

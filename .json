@@ -1,0 +1,196 @@
+{
+  "certifications": [],
+  "education": [
+    {
+      "degree": "B.Tech",
+      "endDate": "2025",
+      "fieldOfStudy": "Computer Science Engineering",
+      "gpa": "7.6",
+      "institution": "JIT, Nagpur",
+      "startDate": "2021"
+    },
+    {
+      "degree": "Class XII",
+      "endDate": "2021",
+      "fieldOfStudy": "State Board",
+      "gpa": "75%",
+      "institution": "LTV",
+      "startDate": "2019"
+    },
+    {
+      "degree": "Class X",
+      "endDate": "2019",
+      "fieldOfStudy": "CBSE",
+      "gpa": "76%",
+      "institution": "Narayana Vidyalayam",
+      "startDate": "2017"
+    }
+  ],
+  "eeoDisclosures": {
+    "disabilityStatus": "No, I do not have a disability",
+    "gender": "Decline to self-identify",
+    "raceEthnicity": "Decline to self-identify",
+    "requiresSponsorship": "No",
+    "veteranStatus": "I am not a protected veteran",
+    "workAuthorization": "Yes"
+  },
+  "languages": [
+    "English"
+  ],
+  "personalInfo": {
+    "address": {
+      "city": "Chandrapur",
+      "country": "India",
+      "postalCode": "442401",
+      "state": "Maharashtra",
+      "street": ""
+    },
+    "email": "sushimsushi8699@gmail.com",
+    "firstName": "Sushim",
+    "fullName": "Sushim Padwekar",
+    "github": "https://github.com/sushim123",
+    "lastName": "Padwekar",
+    "linkedin": "https://www.linkedin.com/in/sushim-padwekar-693960257/",
+    "phone": "+91 9970165418",
+    "website": "https://sushim-portfolio.vercel.app/"
+  },
+  "projects": [
+    {
+      "description": "Personal portfolio website showcasing projects and skills.",
+      "technologies": [],
+      "title": "Personal Portfolio",
+      "url": "https://sushim-portfolio.vercel.app/"
+    },
+    {
+      "description": "Website for MTAB V10 technology services.",
+      "technologies": [],
+      "title": "MTAB V10 Website",
+      "url": "https://www.mtabtechnology.com/"
+    },
+    {
+      "description": "Cross-platform mobile app built with React Native CLI.",
+      "technologies": [
+        "React Native CLI"
+      ],
+      "title": "E-commerce App",
+      "url": ""
+    },
+    {
+      "description": "Real-time chat application project.",
+      "technologies": [],
+      "title": "Real-Time Chat Application",
+      "url": "https://tars-assignment-submission.vercel.app/"
+    }
+  ],
+  "resumeAICheckerReport": {
+    "checkedAt": "2026-08-29T07:33:57.988Z",
+    "checkedBy": "Resume AI Checker Agent",
+    "completenessScore": 95,
+    "enhancementsApplied": [
+      "Verified candidate fields & structure"
+    ],
+    "missingFieldsDetected": [],
+    "verifiedSections": [
+      "Personal Info",
+      "Work Experience",
+      "Education",
+      "Skills",
+      "Projects"
+    ]
+  },
+  "skills": [
+    "JavaScript",
+    "TypeScript",
+    "React.js",
+    "Next.js",
+    "React Native",
+    "HTML",
+    "CSS",
+    "Tailwind CSS",
+    "Node.js",
+    "Express.js",
+    "MongoDB",
+    "Mongoose",
+    "PostgreSQL",
+    "Socket.IO",
+    "REST APIs",
+    "Git",
+    "GitHub",
+    "Slack",
+    "Notion",
+    "Vercel",
+    "AWS",
+    "Microsoft Azure",
+    "Render",
+    "Linux VPS"
+  ],
+  "summary": "Software developer with hands-on experience building web and mobile applications, from backend APIs and database schemas to React Native mobile apps and admin panels. Comfortable working across the stack — Postgres schema design, REST APIs, and deployment on a Linux VPS — while collaborating with teams using GitHub for version control and code review.",
+  "targetQuestionnaireAnswers": {
+    "additionalAvailabilityComments": "Available for full-time work and flexible hours.",
+    "allowSmsCommunication": true,
+    "availableWeekendsHolidays": true,
+    "earliestTimeFriday": "6:00 AM",
+    "earliestTimeMonday": "6:00 AM",
+    "earliestTimeSaturday": "6:00 AM",
+    "earliestTimeSunday": "6:00 AM",
+    "earliestTimeThursday": "6:00 AM",
+    "earliestTimeTuesday": "6:00 AM",
+    "earliestTimeWednesday": "6:00 AM",
+    "experienceBeauty": false,
+    "experienceCustomerService": false,
+    "experienceFood": false,
+    "experienceSalesfloor": false,
+    "experienceStyle": false,
+    "experienceTech": true,
+    "experienceWarehousing": false,
+    "hasEmploymentAgreementRestrictions": false,
+    "isAtLeast18": true,
+    "isCurrentOrPastTargetContractor": false,
+    "isLegallyAuthorizedUS": false,
+    "isReferralAgency": false,
+    "openToRelocation": true,
+    "teamSizeLed": "N/A",
+    "yearsCoachingDeveloping": "None",
+    "yearsHiringBuildingSalesTeams": "None",
+    "yearsLeadingTeam": "None",
+    "yearsStockingSettingSelling": "None"
+  },
+  "workExperience": [
+    {
+      "company": "G-PAC",
+      "description": "Built the Android and iOS apps for the company's retail platform in React Native, working feature by feature alongside the design team.\nWrote and maintained REST APIs in Node.js and Express to support the mobile app's core flows.\nDesigned the PostgreSQL schema for the application, including table structure and queries for the admin panel and mobile app.\nBuilt the admin panel used to manage app content, and handled deployment and ongoing maintenance on a Linux VPS.\nCollaborated with the team through GitHub, managing pull requests, code reviews, and merge conflicts as part of the regular workflow.",
+      "endDate": "06/2026",
+      "isCurrent": false,
+      "jobTitle": "Software Developer",
+      "location": "",
+      "startDate": "03/2026"
+    },
+    {
+      "company": "HIVIE Solutions",
+      "description": "Worked on a live production backend for an industrial client, built with Node.js, Express, TypeScript, and MongoDB.\nAdded real-time features using Socket.IO for live status updates between connected clients.\nWorked on API design and schema changes as the product evolved, and profiled slow endpoints to bring response times down.",
+      "endDate": "03/2025",
+      "isCurrent": false,
+      "jobTitle": "Backend Developer (Intern → Full-Time)",
+      "location": "",
+      "startDate": "07/2024"
+    },
+    {
+      "company": "LearnWik Pvt. Ltd.",
+      "description": "Built 3 responsive websites in React, HTML, CSS, and JavaScript from Figma-style UI designs.\nTurned static designs into mobile-friendly pages, and built 2 additional frontend projects for IT-sector clients.",
+      "endDate": "06/2023",
+      "isCurrent": false,
+      "jobTitle": "Junior Frontend Developer",
+      "location": "",
+      "startDate": "01/2023"
+    },
+    {
+      "company": "Freelance",
+      "description": "Built a College Management System in Next.js from scratch, handling both frontend and backend.\nSet up role-based access for Admin, Teacher, and Student accounts, each with a different view of the system.\nBuilt out attendance tracking, marks entry, report card generation, and dashboards for each role.\nDesigned the API layer and database for academic records, and it's still in use for day-to-day academic operations.",
+      "endDate": "01/2026",
+      "isCurrent": false,
+      "jobTitle": "Full-Stack Developer",
+      "location": "",
+      "startDate": "10/2025"
+    }
+  ]
+}

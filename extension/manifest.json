@@ -12,7 +12,6 @@
   "host_permissions": [
     "https://*.myworkdayjobs.com/*",
     "https://*.workday.com/*",
-    
     "https://resume-automation-workday-auto-fill.vercel.app"
   ],
   "side_panel": {
@@ -31,7 +30,9 @@
         "https://*.myworkdayjobs.com/*",
         "https://*.workday.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]
